@@ -1,0 +1,9 @@
+# Persisting
+## Persisting synapses
+- note that connectivity does not change - no structural plasticity (synapotgenesis/synaptic pruning) 
+-> connectivity matrix is constant
+-> implication for persistance: no need for encoding zero entries or position of synapses - as this is sufficently done by connectivity matrix and ordering values according to realized synapse id (see below)
+    - save connectivity matrix once - array of realized pre- and postsynaptic neuron ids - similar to sparse matrix in coordinate form but without the need to save a value (boolean here - would be redundant)  
+    - for any monitored variable save as ndarray with dims r x t, where
+      r is the row index of the synapse in the ndarray of the synapse ids
+      and t is the time point of the specific sampling

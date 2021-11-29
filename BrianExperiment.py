@@ -15,7 +15,7 @@ from brian2 import ms, defaultclock, StateMonitor, Synapses
 
 from persistence import Array, FileMap, Node, VArray, Writer
 import persistence
-from utils import generate_sequential_file_name, validate_file_path
+from utils import generate_sequential_file_name, retrieve_callers_context, retrieve_callers_frame, validate_file_path
 from network import NeuronPopulation, Synapse
 
 # _ prevents name from being exported
@@ -28,6 +28,9 @@ class BrianExperiment:
     All data monitored by NeuronPopulation instances is automatically persisted as well as time steps of defaultclock.
     Any additional data can be persisted by adding it to a dict passed to :class:`BrianExperiment`.
     It relies on using the default clock for all network components - we save time array only once.
+
+    It is crucial that all network definitions (instances of :class:`NeuronPopulation`, :class:`Synapse`,...) are bound to a unique name,
+    as logic in this class makes use of these names, eg. for persisting.
 
     Note if neuron equations and parameters reside elsewhere (see :attr:`BrianExperiment.neuron_eq_module`, :attr:`BrianExperiment.neuron_param_module`)
     then update these class variables like so:
@@ -130,7 +133,6 @@ class BrianExperiment:
                 if error:
                     raise ValueError(error)
             else:
-                print("hi")
                 base_dir = os.path.join(os.path.abspath("."), "experiments")
                 path = generate_sequential_file_name(base_dir, "exp", ".h5")
                 if not os.path.isdir(base_dir):
@@ -208,24 +210,13 @@ class BrianExperiment:
         # note technically we are testing whether method name defined by class and file path is same as file where class is defined
         #      so defining a function with same name as method of class within same file would
         #      break this (counted as class method and therefore ignored)
-
-        # print("\n")
-        # print([fi.function for fi in inspect.stack()])
-
-        for frame_info in inspect.stack():
-            if not (
-                frame_info.function in dir(self.__class__)
-                and frame_info.filename == os.path.abspath(__file__)
-            ):
-                return frame_info
-        raise Exception(
-            f"No frame outside the context of class {self.__class__.__name__} found."
-        )
+        return retrieve_callers_frame(lambda fi: not (fi.function in dir(self.__class__) and fi.filename == os.path.abspath(__file__)))
+ 
 
     def _retrieve_callers_context(self):
         # retrieve the context: globals updated with locals (ie locals shadow globals if same key in both)
-        frame = self._retrieve_callers_frame().frame
-        return {k: v for k, v in [*frame.f_globals.items()] + [*frame.f_locals.items()]}
+        frame_info = self._retrieve_callers_frame()
+        return retrieve_callers_context(frame_info)
 
     def _save_context(self):
         self._device_context = self._collect_devices()
@@ -343,10 +334,8 @@ class BrianExperiment:
                     neurp[k] = Node()
                     neurp[k]["ids"] = v.ids
                     mon_data = v.monitored
-                    print([*mon_data.keys()])
                     for mon in mon_data.keys():
                         neurp[k][mon] = Node()
-                        print(mon_data[mon].keys())
                         for var, val in mon_data[mon].items():
                             # note that np.array on ndarrays is idempotent
                             neurp[k][mon][var] = np.array(val)
@@ -360,7 +349,9 @@ class BrianExperiment:
                     if v.__class__ == Synapse
                 ]:
                     sn[k] = Node()
-                    sn[k]["ids"] = v.synapses
+                    sn[k]["source_population"] = v.source_name
+                    sn[k]["target_population"] = v.target_name
+                    sn[k]["ids"] = np.array(v.synapses)
                     mon_data = v.monitored
                     for mon in mon_data.keys():
                         sn[k][mon] = Node()
@@ -383,7 +374,6 @@ class BrianExperiment:
                     mod_name = BrianExperiment.resolve_module_name(module)
                     fm[mod_name] = Node()
                     for param in self._neuron_parameters:
-                        print(param)
                         fm[mod_name][param] = module.__dict__[param]
 
         self._in_context = False

@@ -1,6 +1,8 @@
 import os
 import shutil
 import re
+from typing import Callable
+import inspect
 
 
 class TestEnv:
@@ -80,3 +82,21 @@ def generate_sequential_file_name(base_path: str, base_name: str, ext: str):
     while os.path.isfile(os.path.join(base_path, f"{base_name}_{i}{ext}")):
         i += 1
     return os.path.join(base_path, f"{base_name}_{i}{ext}")
+
+
+def retrieve_callers_frame(condition:Callable[[inspect.FrameInfo],bool]):
+    # find first caller in call stack (excepting top most frame ~ call to this fct)fullfilling condition of the parameter condition
+
+    # top most stack frame represents call to this function
+    for frame_info in inspect.stack()[1:]:
+        if condition(frame_info):
+            return frame_info
+    raise Exception(
+        f"No frame satisfying condition { condition } found."
+    )
+
+def retrieve_callers_context(frame_info:inspect.FrameInfo):
+    # retrieve the context: globals updated with locals (ie locals shadow globals if same key in both)
+    frame = frame_info.frame
+    return {k: v for k, v in [*frame.f_globals.items()] + [*frame.f_locals.items()]}
+

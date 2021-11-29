@@ -5,9 +5,11 @@ from brian2.monitors.spikemonitor import SpikeMonitor
 from brian2.synapses.synapses import Synapses
 import numpy as np
 import itertools
+import os
 
 
 from differential_equations.neuron_equations import eqs_P, eqs_I
+from utils import retrieve_callers_context, retrieve_callers_frame
 
 
 class NeuronPopulation:
@@ -133,6 +135,20 @@ class Synapse:
         """
 
         self._syn_obj = synapse_object
+        
+        # retrieve top most stack frame of a function call made to a function that does not reside within this file
+        frame_info = retrieve_callers_frame(lambda fi: fi.filename != os.path.abspath(__file__))
+        context = retrieve_callers_context(frame_info)
+        self.source_name = "Failed to find source in scope"
+        self.target_name = "Failed to find target in scope"
+        for k,v in context.items():
+            if isinstance(v, NeuronPopulation):
+                if v._pop == self._syn_obj.source:
+                    self.source_name = k
+            # can be both - autapse
+                if v._pop == self._syn_obj.target:
+                    self.target_name = k
+
         self._mon = None
 
     @property
