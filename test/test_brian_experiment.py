@@ -123,7 +123,6 @@ class TestClassBrianExperiment(TestCase):
             E = NeuronPopulation(4, eqs, threshold='v > 0.6', reset="v=0", method="rk4")
             E.monitor(E.ids, ["v"])
 
-            #raise ValueError(exp._retrieve_callers_context().keys())
 
             exp.run(5*ms)
 

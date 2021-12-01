@@ -7,13 +7,12 @@ import os
 from typing import Any, List, Tuple, Dict, Union
 from types import ModuleType
 import importlib
-import inspect
 import gc
 
 from brian2.units.fundamentalunits import Quantity
 from brian2 import ms, defaultclock, StateMonitor, Synapses
 
-from persistence import Array, FileMap, Node, VArray, Writer
+from persistence import FileMap, Node, Writer
 import persistence
 from utils import generate_sequential_file_name, retrieve_callers_context, retrieve_callers_frame, validate_file_path
 from network import NeuronPopulation, Synapse
@@ -334,11 +333,13 @@ class BrianExperiment:
                     neurp[k] = Node()
                     neurp[k]["ids"] = v.ids
                     mon_data = v.monitored
+
                     for mon in mon_data.keys():
                         neurp[k][mon] = Node()
                         for var, val in mon_data[mon].items():
+                            print("__exit__", val)
                             # note that np.array on ndarrays is idempotent
-                            neurp[k][mon][var] = np.array(val)
+                            neurp[k][mon][var] = val
 
                 # persist all synapses
                 fm[Synapse.__name__] = Node()

@@ -1,15 +1,17 @@
 from typing import Callable, List, Tuple, Dict, Union
-from brian2 import NeuronGroup, StateMonitor, ms
+from brian2 import NeuronGroup, StateMonitor, ms, second, khertz
 from brian2.monitors.ratemonitor import PopulationRateMonitor
 from brian2.monitors.spikemonitor import SpikeMonitor
 from brian2.synapses.synapses import Synapses
+from brian2.units.fundamentalunits import Quantity, get_unit
 import numpy as np
 import itertools
 import os
 
 
+
 from differential_equations.neuron_equations import eqs_P, eqs_I
-from utils import retrieve_callers_context, retrieve_callers_frame
+from utils import clean_brian2_quantity, retrieve_callers_context, retrieve_callers_frame
 
 
 class NeuronPopulation:
@@ -36,16 +38,50 @@ class NeuronPopulation:
         """
         :return: dictionary of recorded variables and their recorded values
         """
+        
         data = {}
-        for name, mon in [
-            ("state", self._mon),
-            ("spike", self._spike),
-            ("rate", self._rate),
-        ]:
-            if mon and hasattr(mon, "recorded_variables"):
-                data[name] = {
-                    k: getattr(mon, k) for k in [*mon.recorded_variables.keys(), "t"]
-                }
+
+        # issue with variables view checkout
+        # needs to be unwrapped somehow
+
+        if hasattr(self._mon, "recorded_variables"):
+            data["state"] = { "meta" : {} }
+            rec_clean, unit_str = clean_brian2_quantity(self._mon.t.variable.get_value_with_unit())
+            data["state"]["t"] = rec_clean
+            data["state"] ["meta"]["t"] = unit_str
+
+            for k in [*self._mon.recorded_variables.keys()]: 
+                recs = getattr(self._mon, k)
+                if isinstance(recs, Quantity):
+                    rec_clean, unit_str = clean_brian2_quantity(recs) 
+                    data["state"][k] = rec_clean
+                    data["state"]["meta"][k] = unit_str
+                else:
+                    data["state"][k] = recs
+        
+
+        if hasattr(self._spike,"t") and len(self._spike.t) != 0:
+            recs = self._spike.all_values()['t']
+            val = list(recs.values())[0]
+            unit = val.get_best_unit()
+            data["spike"] = {}
+            data["spike"]["spike_train"] = {
+                str(k):np.array(v/unit) for k,v in recs.items()
+            }
+            data["spike"]["meta"] = { "spike_train__keys" : "neuron indices", "spike_train__values" : str(unit) }
+
+        if self._rate:
+            data["rate"] = { "meta": {} }
+
+            rec_clean, unit_str = clean_brian2_quantity(self._rate.t.variable.get_value_with_unit())
+            data["rate"]["t"] = rec_clean
+            data["rate"] ["meta"]["t"] = unit_str
+
+            rec_clean, unit_str = clean_brian2_quantity(self._rate.rate.variable.get_value_with_unit())
+            data["rate"]["rate"] = rec_clean
+            data["rate"]["meta"]["rate"] = unit_str 
+        
+        
         return data
 
     def monitor(self, ids: List[int], variables: List[str] = []):

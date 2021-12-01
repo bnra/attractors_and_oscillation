@@ -3,6 +3,7 @@ import shutil
 import re
 from typing import Callable
 import inspect
+from brian2.units.fundamentalunits import Quantity
 
 
 class TestEnv:
@@ -99,4 +100,8 @@ def retrieve_callers_context(frame_info:inspect.FrameInfo):
     # retrieve the context: globals updated with locals (ie locals shadow globals if same key in both)
     frame = frame_info.frame
     return {k: v for k, v in [*frame.f_globals.items()] + [*frame.f_locals.items()]}
+
+def clean_brian2_quantity(x:Quantity):
+    unit = x.get_best_unit()
+    return x / unit, str(unit)
 
