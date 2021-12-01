@@ -6,7 +6,7 @@ from brian2 import ms, defaultclock
 from test.utils import TestCase, compare_iterables
 from BrianExperiment import BrianExperiment
 from persistence import FileMap
-from network import NeuronPopulation, Connector, Synapse
+from network import NeuronPopulation, Connector, SpikeDeviceGroup, Synapse
 from persistence import opath
 
     
@@ -133,8 +133,8 @@ class TestClassBrianExperiment(TestCase):
         with FileMap(path="file.h5", mode="read") as fm:
             #raise ValueError(f'fm:{fm[NeuronPopulation.__name__]["E"]["state"]["t"] * ms}, mon:{available_data["state"]["t"]}')
             #raise ValueError(f"{fm}")
-            self.assertTrue(np.all(fm[NeuronPopulation.__name__]["E"]["state"]["v"] == available_data["state"]["v"]))
-            self.assertTrue(np.all(fm[NeuronPopulation.__name__]["E"]["state"]["t"] == np.array(available_data["state"]["t"])))
+            self.assertTrue(np.all(fm[SpikeDeviceGroup.__name__]["E"]["state"]["v"] == available_data["state"]["v"]))
+            self.assertTrue(np.all(fm[SpikeDeviceGroup.__name__]["E"]["state"]["t"] == np.array(available_data["state"]["t"])))
 
 
     def test_when_persist_set_should_auto_save_instances_of_synapse(self):

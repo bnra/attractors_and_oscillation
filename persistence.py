@@ -148,14 +148,15 @@ class Reader:
         """
         Create a dictionary from .h5 file abstraction
 
-        :param slice_length: length of slices used to represent arrays in leaf nodes as str
+        :param slice_length: length of slices used to represent arrays in leaf nodes as str and twice the length is used for slicing strings
         :param full_load: if True reads the entire array from the underlying as :class:`numpy.ndarray`
         """
 
         def beautify_string(string: str) -> str:
+            # double the array length and both slices from the start -> 4
             return (
-                f"{string[:slice_length*2]} ..."
-                if len(string) > slice_length * 2
+                f"{string[:slice_length*4]} ..."
+                if len(string) > slice_length * 4
                 else string
             )
 

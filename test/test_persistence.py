@@ -278,19 +278,32 @@ class TestClassReader(TestCase):
             self.assertTrue(isinstance(x, dict) and np.all(x["mydata"]["run_x"]["spikes"] == np.arange(100)))
 
     def test_method_repr_when_str_array_and_long_str_and_short_str_passed_should_return_string_array_and_long_str_shortening_and_full_short_str(self):
-        x = "a"*20 + "b"*20
+        x = "a"*30 + "b"*30
 
         with FileMap("file2.h5", mode="write") as w:
             w["data"] = { "x" : "asd", "y" : [x for i in range(50)], "z":x}
         with FileMap("file2.h5", mode="read") as r:
             s = r.__repr__()
+        
+        should = '{\n  "data": {\n    "x": "asd",\n    "y": "array([\'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbb ...\'\\n '\
+            + '\'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbb ...\'\\n \'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbb ...\'\\n '\
+            + '\'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbb ...\'\\n \'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbb ...\'\\n '\
+            + '\'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbb ...\'\\n \'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbb ...\'\\n '\
+            + '\'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbb ...\'\\n \'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbb ...\'\\n '\
+            + '\'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbb ...\' ... \'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbb ...\'\\n '\
+            + '\'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbb ...\'\\n \'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbb ...\'\\n '\
+            + '\'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbb ...\'\\n \'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbb ...\'\\n '\
+            + '\'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbb ...\'\\n \'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbb ...\'\\n '\
+            + '\'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbb ...\'\\n \'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbb ...\'\\n '\
+            + '\'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbb ...\']) (50,) dtype:str1408",\n '\
+            + '   "z": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbb ..."\n  }\n}'
 
-        should = '{\n  "data": {\n    "x": "asd",\n    "y": "array([\'aaaaaaaaaaaaaaaaaaaa ...\' \'aaaaaaaaaaaaaaaaaaaa ...\'\\n'\
-        + ' \'aaaaaaaaaaaaaaaaaaaa ...\' \'aaaaaaaaaaaaaaaaaaaa ...\'\\n \'aaaaaaaaaaaaaaaaaaaa ...\' \'aaaaaaaaaaaaaaaaaaaa ...\'\\n'\
-        + ' \'aaaaaaaaaaaaaaaaaaaa ...\' \'aaaaaaaaaaaaaaaaaaaa ...\'\\n \'aaaaaaaaaaaaaaaaaaaa ...\' \'aaaaaaaaaaaaaaaaaaaa ...\' ...'\
-        + ' \'aaaaaaaaaaaaaaaaaaaa ...\' \'aaaaaaaaaaaaaaaaaaaa ...\'\\n \'aaaaaaaaaaaaaaaaaaaa ...\' \'aaaaaaaaaaaaaaaaaaaa ...\'\\n'\
-        + ' \'aaaaaaaaaaaaaaaaaaaa ...\' \'aaaaaaaaaaaaaaaaaaaa ...\'\\n \'aaaaaaaaaaaaaaaaaaaa ...\' \'aaaaaaaaaaaaaaaaaaaa ...\'\\n'\
-        + ' \'aaaaaaaaaaaaaaaaaaaa ...\' \'aaaaaaaaaaaaaaaaaaaa ...\']) (50,) dtype:str768",\n    "z": "aaaaaaaaaaaaaaaaaaaa ..."\n  }\n}'
+        # should = '{\n  "data": {\n    "x": "asd",\n    "y": "array([\'aaaaaaaaaaaaaaaaaaaa ...\' \'aaaaaaaaaaaaaaaaaaaa ...\'\\n'\
+        # + ' \'aaaaaaaaaaaaaaaaaaaa ...\' \'aaaaaaaaaaaaaaaaaaaa ...\'\\n \'aaaaaaaaaaaaaaaaaaaa ...\' \'aaaaaaaaaaaaaaaaaaaa ...\'\\n'\
+        # + ' \'aaaaaaaaaaaaaaaaaaaa ...\' \'aaaaaaaaaaaaaaaaaaaa ...\'\\n \'aaaaaaaaaaaaaaaaaaaa ...\' \'aaaaaaaaaaaaaaaaaaaa ...\' ...'\
+        # + ' \'aaaaaaaaaaaaaaaaaaaa ...\' \'aaaaaaaaaaaaaaaaaaaa ...\'\\n \'aaaaaaaaaaaaaaaaaaaa ...\' \'aaaaaaaaaaaaaaaaaaaa ...\'\\n'\
+        # + ' \'aaaaaaaaaaaaaaaaaaaa ...\' \'aaaaaaaaaaaaaaaaaaaa ...\'\\n \'aaaaaaaaaaaaaaaaaaaa ...\' \'aaaaaaaaaaaaaaaaaaaa ...\'\\n'\
+        # + ' \'aaaaaaaaaaaaaaaaaaaa ...\' \'aaaaaaaaaaaaaaaaaaaa ...\']) (50,) dtype:str768",\n    "z": "aaaaaaaaaaaaaaaaaaaa ..."\n  }\n}'
         #raise ValueError(s, should)
         self.assertEqual(s, should)
 

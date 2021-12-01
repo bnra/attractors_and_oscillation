@@ -1,11 +1,11 @@
 import itertools
-from brian2 import StateMonitor, SpikeMonitor, PopulationRateMonitor, ms
-
+from brian2 import StateMonitor, SpikeMonitor, PopulationRateMonitor, ms, khertz, Hz
+import numpy as np
 
 from BrianExperiment import BrianExperiment
 
 from test.utils import TestCase
-from network import NeuronPopulation, Connector
+from network import NeuronPopulation, Connector, PoissonDeviceGroup
 from differential_equations.neuron_equations import PreEq_AMPA
 from differential_equations.neuron_parameters import delay_AMPA
 
@@ -31,7 +31,7 @@ class TestNeuronPopulation(TestCase):
         G.monitor(G.ids, ['v'])
         self.assertEqual(G._mon.__class__, StateMonitor)
 
-    #
+    
     def test_monitor_spike_when_experiment_run_should_monitor_spike_train(self):
         with BrianExperiment(persist=True, path="file.h5") as exp:
             G = NeuronPopulation(4, 'dv/dt=(1-v)/(10*ms):1', threshold='v > 0.1', reset="v=0", method="rk4")
@@ -39,8 +39,6 @@ class TestNeuronPopulation(TestCase):
             connect = Connector(synapse_type="static")
             syn_pp = connect(G, G, G.ids, G.ids, connect=("bernoulli", {"p":0.3}), on_pre='v += 0.1')
             exp.run(5*ms)
-            #raise ValueError(G.monitored)
-            #raise ValueError(f"spike: {list(G.monitored['spike']['spike_train'].keys())}, {[str(e) for e in range(4)]}")
             self.assertTrue("spike" in G.monitored and list(G.monitored["spike"]["spike_train"].keys()) == [str(e) for e in range(4)])
 
     def test_monitor_rate_when_experiment_run_should_monitor_population_rate(self):
@@ -50,8 +48,6 @@ class TestNeuronPopulation(TestCase):
             connect = Connector(synapse_type="static")
             syn_pp = connect(G, G, G.ids, G.ids, connect=("bernoulli", {"p":0.3}), on_pre='v += 0.1')
             exp.run(5*ms)
-            #raise ValueError(G.monitored)
-            #raise ValueError(f"rate: {list(G.monitored['rate']['rate'].shape)}, {int(5 * ms / exp.dt) + 1}")
             self.assertTrue("rate" in G.monitored and G.monitored["rate"]["rate"].shape[0] == int(5*ms / exp.dt) + 1)
 
     def test_monitor_when_experiment_run_should_monitor_variables_tb_monitored(self):
@@ -62,7 +58,6 @@ class TestNeuronPopulation(TestCase):
             syn_pp = connect(G, G, G.ids, G.ids, connect=("bernoulli", {"p":0.3}), on_pre='v += 0.1')
             exp.run(5*ms)
 
-            #raise ValueError(f"state v : {G.monitored['state']['v'].shape[1]}, {int(5*ms / exp.dt) + 1}")
             self.assertTrue("v" in G.monitored["state"] and G.monitored["state"]["v"].shape[0] == 4 \
                 and G.monitored["state"]["v"].shape[1] == int(5*ms / exp.dt) + 1)
 
@@ -88,4 +83,37 @@ class TestSynapses(TestCase):
             connect = Connector(synapse_type="static")
             S = connect(E, I, E.ids, I.ids, connect=("all2all", {}))
 
-            self.assertTrue(S.source_name == "E" and S.target_name == "I")
+            self.assertTrue(S.source == { "name": "E", "class" : E.__class__.__name__ } and S.target == { "name": "I", "class" : I.__class__.__name__ })
+
+
+class TestPoissonDeviceGroup(TestCase):
+
+    def test_when_poisson_rate_set_should_evoke_spikes_at_that_rate(self):
+        with BrianExperiment(dt=0.1 * ms) as exp:
+            P = PoissonDeviceGroup(1, rate=1 * khertz)
+            P.monitor_spike(P.ids)
+            exp.run(500 * ms)
+            self.assertTrue((abs(len(P.monitored["spike"]["spike_train"]["0"]) - 500) / 500) < 0.1)
+
+
+        
+    def test_when_poisson_time_variant_rate_set_should_evoke_spikes_proportional_to_the_integral(self):
+        # we are making use of angular_frequency = 2 * pi / 1 s -> Integral_0s^1s == offset * 1s * khz
+        # integral of the cosinus component over 2*pi = 0
+        with BrianExperiment(dt=0.5*ms) as exp:
+            
+            offset = 1.0
+            time_elapsed = 1000.0 * ms
+            rate = PoissonDeviceGroup.create_time_variant_rate(offset=offset, amplitude=1.0, angular_frequency=2*np.pi*Hz)
+            P = PoissonDeviceGroup(1, rate=rate)
+            P.monitor_spike(P.ids)
+
+
+            exp.run(time_elapsed)
+
+            should = offset * khertz * time_elapsed
+            #raise ValueError(should, len(P.monitored["spike"]["spike_train"]["0"]))
+            self.assertTrue((abs(len(P.monitored["spike"]["spike_train"]["0"]) - should) / should) < 0.1)
+
+
+        

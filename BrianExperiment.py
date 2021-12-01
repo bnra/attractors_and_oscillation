@@ -1,5 +1,6 @@
 from brian2.core.network import Network
 from brian2.groups.neurongroup import NeuronGroup
+from brian2.input.poissongroup import PoissonGroup
 from brian2.monitors.ratemonitor import PopulationRateMonitor
 from brian2.monitors.spikemonitor import SpikeMonitor
 import numpy as np
@@ -15,7 +16,7 @@ from brian2 import ms, defaultclock, StateMonitor, Synapses
 from persistence import FileMap, Node, Writer
 import persistence
 from utils import generate_sequential_file_name, retrieve_callers_context, retrieve_callers_frame, validate_file_path
-from network import NeuronPopulation, Synapse
+from network import NeuronPopulation, PoissonDeviceGroup, SpikeDeviceGroup, Synapse
 
 # _ prevents name from being exported
 _Data = Union[np.ndarray, Dict[str, "_Data"]]
@@ -228,13 +229,14 @@ class BrianExperiment:
         for obj in [
             v
             for v in self._retrieve_callers_context().values()
-            if v.__class__ == NeuronPopulation or v.__class__ == Synapse
+            if v.__class__ == NeuronPopulation or v.__class__ == Synapse or v.__class__ == PoissonDeviceGroup
         ]:
             # get all StateMonitors, NeuronGroups, Synapses etc. (add Poisson)
             devices = [
                 v
                 for v in obj.__dict__.values()
                 if (v.__class__ == NeuronGroup
+                or v.__class__ == PoissonGroup
                 or v.__class__ == Synapses
                 or v.__class__ == StateMonitor
                 or v.__class__ == SpikeMonitor
@@ -321,13 +323,13 @@ class BrianExperiment:
 
                 # persist all Neuronpopulations
 
-                fm[NeuronPopulation.__name__] = Node()
-                neurp = fm[NeuronPopulation.__name__]
+                fm[SpikeDeviceGroup.__name__] = Node()
+                neurp = fm[SpikeDeviceGroup.__name__]
                 for i, (k, v) in enumerate(
                     [
                         (k, v)
                         for k, v in self._retrieve_callers_context().items()
-                        if v.__class__ == NeuronPopulation
+                        if isinstance(v, SpikeDeviceGroup)
                     ]
                 ):
                     neurp[k] = Node()
@@ -337,7 +339,6 @@ class BrianExperiment:
                     for mon in mon_data.keys():
                         neurp[k][mon] = Node()
                         for var, val in mon_data[mon].items():
-                            print("__exit__", val)
                             # note that np.array on ndarrays is idempotent
                             neurp[k][mon][var] = val
 
@@ -350,8 +351,8 @@ class BrianExperiment:
                     if v.__class__ == Synapse
                 ]:
                     sn[k] = Node()
-                    sn[k]["source_population"] = v.source_name
-                    sn[k]["target_population"] = v.target_name
+                    sn[k]["source"] = v.source
+                    sn[k]["target"] = v.target
                     sn[k]["ids"] = np.array(v.synapses)
                     mon_data = v.monitored
                     for mon in mon_data.keys():
