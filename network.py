@@ -1,20 +1,21 @@
-from typing import Callable, List, Tuple, Dict, Union
-from brian2 import NeuronGroup, StateMonitor, ms, second, khertz, Function, check_units
+from typing import Any, Callable, List, Tuple, Dict, Union
+from brian2 import NeuronGroup, StateMonitor, ms, check_units
 from brian2.input.poissongroup import PoissonGroup
 from brian2.input.timedarray import TimedArray
 from brian2.monitors.ratemonitor import PopulationRateMonitor
 from brian2.monitors.spikemonitor import SpikeMonitor
 from brian2.synapses.synapses import Synapses
-from brian2.units.fundamentalunits import Quantity, get_unit
+from brian2.units.fundamentalunits import Quantity
 from brian2.units.stdunits import Hz
 import numpy as np
 import itertools
 import os
-from abc import ABCMeta, abstractmethod, abstractproperty
+from abc import ABCMeta, abstractproperty
 
 
 from differential_equations.neuron_equations import eqs_P, eqs_I
-from utils import clean_brian2_quantity, retrieve_callers_context, retrieve_callers_frame
+from utils import Brian2UnitError, clean_brian2_quantity, get_brian2_base_unit, retrieve_callers_context, retrieve_callers_frame 
+from distribution import draw_normal, draw_uniform, draw_uniformely_random_from_values
 
 class SpikeDeviceGroup(metaclass=ABCMeta):
 
@@ -140,12 +141,34 @@ class NeuronPopulation(SpikeDeviceGroup):
     Convenience class for interfacing with the :class:`brian2.NeuronGroup` and the respective :class:`brian2.StatusMonitor` of the neurons in the population
     """
 
+    # add param voltage_init:str=uniform
     def __init__(self, size: int, eqs: str, *args, **kwargs):
 
         self._population = NeuronGroup(size, eqs, *args, **kwargs)
+
         self._eqs = eqs
         self._mon = None
         super().__init__()
+
+    def set_population_variable(self, variable:str, value:Quantity):
+        # eg self.set_population_variable("v", draw_normal(size=self.get_population_variable_size("v")) * mV)
+        if not variable in self._pop.variables.keys():
+            raise ValueError(f"No such variable {variable} in neuron population. Available variables: {list(self._pop.variables.keys())}.")
+        shape_pop = np.array(self.get_population_variable(variable)).shape
+        shape_val = np.array(value).shape 
+        if not shape_pop == shape_val:
+            raise ValueError(f"Parameter value must be of same shape as the neuron population { shape_pop }, but is of shape { shape_val }.")
+        base_unit_pop = get_brian2_base_unit(self.get_population_variable(variable))
+        base_unit_val = get_brian2_base_unit(value)
+        if not base_unit_pop == base_unit_val:
+            raise Brian2UnitError(f"Base unit of variable { variable } in population does not match base unit of value {value}, {base_unit_pop} and {base_unit_val} respectively.")
+        self._pop.variables[variable].set_value(value)
+
+    def get_population_variable(self, variable:str)->Quantity:
+        return self._pop.variables[variable].get_value_with_unit()
+
+    def get_population_variable_size(self, variable:str)->int:
+        return np.array(self.get_population_variable(variable)).size
 
     @property
     def _pop(self):

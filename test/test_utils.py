@@ -1,7 +1,9 @@
+from brian2 import ms, second
+import numpy as np
 import os
 
 from test.utils import TestCase
-from utils import validate_file_path, generate_sequential_file_name
+from utils import clean_brian2_quantity, get_brian2_base_unit, get_brian2_unit, validate_file_path, generate_sequential_file_name
 
 
 class TestFctValidateFilePath(TestCase):
@@ -87,3 +89,20 @@ class TestFctGenerateSequentialFileName(TestCase):
             sorted(os.listdir(base_path)), [f"{base_name}_{i}{ext}" for i in range(10)]
         )
 
+class TestFctCleanBrian2Quantity(TestCase):
+    def test_when_called_should_remove_unit_and_provide_str_repr(self):
+        x = np.arange(10) * ms
+        x_clean, unit = clean_brian2_quantity(x)
+        self.assertTrue(np.all(x_clean == np.arange(10, dtype=float)) and unit == "ms")
+
+class TestFctGetBrian2Unit(TestCase):
+    def test_when_called_should_return_unit(self):
+        x = np.arange(10) * ms
+        unit = get_brian2_unit(x)
+        self.assertEqual(unit, ms)
+
+class TestFctGetBrian2BaseUnit(TestCase):
+    def test_when_called_should_return_base_unit(self):
+        x = np.arange(10) * ms
+        unit = get_brian2_base_unit(x)
+        self.assertEqual(unit, second)

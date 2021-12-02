@@ -3,7 +3,7 @@ import shutil
 import re
 from typing import Callable
 import inspect
-from brian2.units.fundamentalunits import Quantity
+from brian2.units.fundamentalunits import Quantity, get_unit
 
 
 class TestEnv:
@@ -105,3 +105,11 @@ def clean_brian2_quantity(x:Quantity):
     unit = x.get_best_unit()
     return x / unit, str(unit)
 
+def get_brian2_unit(x:Quantity):
+    return x.get_best_unit()
+
+def get_brian2_base_unit(x:Quantity):
+    return get_unit(x.dim)
+
+class Brian2UnitError(Exception):
+    pass
