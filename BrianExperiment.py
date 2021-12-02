@@ -1,22 +1,154 @@
-from brian2.core.network import Network
-from brian2.groups.neurongroup import NeuronGroup
-from brian2.input.poissongroup import PoissonGroup
-from brian2.monitors.ratemonitor import PopulationRateMonitor
-from brian2.monitors.spikemonitor import SpikeMonitor
 import numpy as np
 import os
 from typing import Any, List, Tuple, Dict, Union
 from types import ModuleType
 import importlib
 import gc
+import time
+from tqdm import tqdm
 
 from brian2.units.fundamentalunits import Quantity
 from brian2 import ms, defaultclock, StateMonitor, Synapses
+from brian2.core.network import Network
+from brian2.groups.neurongroup import NeuronGroup
+from brian2.input.poissongroup import PoissonGroup
+from brian2.monitors.ratemonitor import PopulationRateMonitor
+from brian2.monitors.spikemonitor import SpikeMonitor
 
 from persistence import FileMap, Node, Writer
 import persistence
-from utils import generate_sequential_file_name, retrieve_callers_context, retrieve_callers_frame, validate_file_path
+from utils import (
+    clean_brian2_quantity,
+    convert_and_clean_brian2_quantity,
+    generate_sequential_file_name,
+    parse_duration_ns,
+    retrieve_callers_context,
+    retrieve_callers_frame,
+    validate_file_path,
+)
 from network import NeuronPopulation, PoissonDeviceGroup, SpikeDeviceGroup, Synapse
+
+
+class TqdmCallBack(tqdm):
+    """Provide progress bar updatable via callback based on :class:`tqdm` via :meth:`tqdm.update()`"""
+
+    def __init__(self, report_freq: Quantity, *args, **kwargs):
+        self.w = None
+        self.dec = 3
+        if (
+            not isinstance(report_freq, Quantity)
+            or clean_brian2_quantity(report_freq)[1] != "ms"
+        ):
+            raise ValueError(
+                "param report_freq must be of unit brian2.ms and type brian2.Quantity"
+            )
+        self.report_freq, _ = clean_brian2_quantity(report_freq)
+        # cut off decimals - show decimal if not log(x) % 1.0 == 0.0
+        rep_dec = int(np.log10(self.report_freq))
+        self.report_dec = 3 - rep_dec if rep_dec <= 3 else 0
+        self.report_w = 3 + self.report_dec
+        super().__init__(*args, **kwargs)
+
+    def update_cb(
+        self, elapsed: Quantity, completed: float, start: Quantity, duration: Quantity
+    ):
+        """
+        update progress bar
+
+        :param elapsed: total real time since start of the experiment
+        :param completed: fraction in [0,1] indicating completion
+        :param start: start of the experiment in biological time
+        :param duration: total duration of the experiment in biological time
+        """
+
+        elapsed = convert_and_clean_brian2_quantity(elapsed)[0]
+        start_ms = convert_and_clean_brian2_quantity(start)[0] * 1000
+        duration_ms = convert_and_clean_brian2_quantity(duration)[0] * 1000
+
+        if not self.w:
+            w = np.log10(duration_ms)
+            self.w = int(w) + self.dec if w % 1.0 == 0.0 else int(w) + self.dec + 1
+
+        bio_progress = round(duration_ms * completed, 3)
+        # bio_end_time = duration_ms * completed if completed > 1.0 else duration_ms
+
+        bio_end_time_offset = start_ms + duration_ms  # bio_end_time
+        # completed is not properly clamped to [0,1]
+        # completed = max(1.0, min(0.0, completed))
+
+        # print(type(elapsed_ms), type(start_ms), type(duration_ms))
+        self.set_description(
+            f"real time elapsed [s]: {elapsed:{self.report_w}.{self.report_dec}f}  |  biological time [ms]: {start_ms:{self.w}.{self.dec}f}"
+            + f" -> {bio_progress:{self.w}.{self.dec}f} ---> {bio_end_time_offset:{self.w}.{self.dec}f}  |  "
+        )
+        self.total = duration_ms
+        return self.update(bio_progress - self.n)
+
+
+class TimeTracker:
+    """
+    track time durations of processes in sequence
+    """
+
+    def __init__(self, verbose: bool = False):
+        self.last_proc = None
+        self._timings = {}
+        self.last_stamp = None
+        self._verbose = verbose
+
+    def add_timing(self, process: str):
+        """
+        add a new process - this marks the end of the previous process if it exists
+        """
+        tt = time.time_ns()
+
+        if self.last_proc:
+            self._timings[self.last_proc] = tt - self.last_stamp
+
+            if self.verbose:
+                print(
+                    f"Process {self.last_proc} done.\n({parse_duration_ns(self._timings[self.last_proc])})"
+                )
+        if self.verbose:
+            print(f"\nStarting process {process}\n...")
+
+        self.last_proc = process
+        self.last_stamp = tt
+
+    def finalize(self):
+        """
+        end the previous process without beginnning a new process
+        """
+        if not self.last_proc:
+            raise Exception(
+                "You cannot call finalize() when you haven't called add_timing() since the last call to finalize()"
+            )
+        tt = time.time_ns()
+        self._timings[self.last_proc] = tt - self.last_stamp
+
+        if self.verbose:
+            print(
+                f"Process {self.last_proc} done.\n({parse_duration_ns(self._timings[self.last_proc])})"
+            )
+
+        self.last_proc = None
+        self.last_stamp = None
+
+    @property
+    def timings(self):
+        """
+        timings of all tracked and ended processes
+        """
+        return self._timings
+
+    @property
+    def verbose(self):
+        """
+        indicates whether the TimeTracker is used in verbose mode, where TimeTracker will print progress
+        (verbose is set in :class:`TimeTracker.__init__()`)
+        """
+        return self._verbose
+
 
 # _ prevents name from being exported
 _Data = Union[np.ndarray, Dict[str, "_Data"]]
@@ -107,6 +239,7 @@ class BrianExperiment:
     def __init__(
         self,
         dt: Quantity = 0.01 * ms,
+        report_progress: bool = True,
         persist: bool = False,
         path: str = "",
         object_path: str = "/",
@@ -118,7 +251,8 @@ class BrianExperiment:
         All data monitored by NeuronPopulation instances is automatically persisted as well as time steps of defaultclock.
         To add additional data set it on dictionary-like :attr:`BrianExperiment.persist_data`.
 
-        :param dt: timestep of defaultclock
+        :param dt: time step of default clock (:data:`brian2.core.clocks.defaultclock`) used as df for all :module:`brian2` objects
+        :param report_progress: print updates on respective state of the simulation: network definition, device collection, running simulation, persisting
         :param persist: specifies whether data is tb persisted
         :param path: path to the file to be used for persisting - df:None, if not set and persist=True will automatically generate file name 'experiments/experiment_i'
         :param object_path: path within the hdf5 file starting with root '/', eg. '/run_x/data', df:'/'
@@ -177,12 +311,23 @@ class BrianExperiment:
         self._neuron_parameters = neuron_params
         self._network = None
 
+        self._timing = TimeTracker(verbose=report_progress)
+
+        self._meta = {}
+
         # whether user is within context
         self._in_context = False
 
         self._device_context = []
 
         self._persist_data = BrianExperiment.PersistData(persist, self)
+
+    @property
+    def time_elapsed(self):
+        """
+        str representing time elapsed during simulation, None if :meth:`BrianExperiment.run()` not executed yet
+        """
+        return str({k: parse_duration_ns(v["duration"]) for k, v in self._timing})
 
     @property
     def persist_data(self):
@@ -210,8 +355,12 @@ class BrianExperiment:
         # note technically we are testing whether method name defined by class and file path is same as file where class is defined
         #      so defining a function with same name as method of class within same file would
         #      break this (counted as class method and therefore ignored)
-        return retrieve_callers_frame(lambda fi: not (fi.function in dir(self.__class__) and fi.filename == os.path.abspath(__file__)))
- 
+        return retrieve_callers_frame(
+            lambda fi: not (
+                fi.function in dir(self.__class__)
+                and fi.filename == os.path.abspath(__file__)
+            )
+        )
 
     def _retrieve_callers_context(self):
         # retrieve the context: globals updated with locals (ie locals shadow globals if same key in both)
@@ -221,7 +370,6 @@ class BrianExperiment:
     def _save_context(self):
         self._device_context = self._collect_devices()
 
-
     def _collect_devices(self):
 
         brian_devices = []
@@ -229,18 +377,22 @@ class BrianExperiment:
         for obj in [
             v
             for v in self._retrieve_callers_context().values()
-            if v.__class__ == NeuronPopulation or v.__class__ == Synapse or v.__class__ == PoissonDeviceGroup
+            if v.__class__ == NeuronPopulation
+            or v.__class__ == Synapse
+            or v.__class__ == PoissonDeviceGroup
         ]:
             # get all StateMonitors, NeuronGroups, Synapses etc. (add Poisson)
             devices = [
                 v
                 for v in obj.__dict__.values()
-                if (v.__class__ == NeuronGroup
-                or v.__class__ == PoissonGroup
-                or v.__class__ == Synapses
-                or v.__class__ == StateMonitor
-                or v.__class__ == SpikeMonitor
-                or v.__class__ == PopulationRateMonitor)
+                if (
+                    v.__class__ == NeuronGroup
+                    or v.__class__ == PoissonGroup
+                    or v.__class__ == Synapses
+                    or v.__class__ == StateMonitor
+                    or v.__class__ == SpikeMonitor
+                    or v.__class__ == PopulationRateMonitor
+                )
                 and v not in self._device_context
             ]
             for device in devices:
@@ -267,23 +419,48 @@ class BrianExperiment:
         namespace.update(clean_ns(self._retrieve_callers_context()))
         return namespace
 
-    def run(self, time: Quantity = 0.01 * ms):
+    def run(self, t: Quantity = 0.01 * ms, report_freq=100 * ms):
+        """
+        run brian2 network via :meth:`brian2.network.run()`
+
+        :param t: time for which the simulation is tb run
+        :param report_freq: frequency at which the report is updated - df: 100 * ms,
+                            irrelevant if progress_report=False in :meth:`BrianExperiment.__init__()`
+        """
 
         if not self._in_context:
             raise Exception(
                 "Call only from within the context: with {self.__class__.__name__}() as exp:\n     exp.run()"
             )
 
+        self._timing.add_timing(process="device_collection")
+
         for device in self._collect_devices():
             self._network.add(device)
 
-        self._network.run(time, namespace=self._get_namespace())
+        self._timing.add_timing(process="simulation")
+
+        if self._timing.verbose:
+            with TqdmCallBack(miniters=1, report_freq=report_freq) as tqdm:
+
+                self._network.run(
+                    t,
+                    namespace=self._get_namespace(),
+                    report=tqdm.update_cb,
+                    report_period=report_freq,
+                )
+        else:
+            self._network.run(t, namespace=self._get_namespace())
+
+        self._timing.finalize()
+
+        tt, unit = clean_brian2_quantity(t)
+        self._meta["simulation_time"] = {"t": np.array(tt), "unit": unit}
 
     def __enter__(self):
 
         # save local context to restore on exit and clear local context added within the context
         self._save_context()
-
 
         # all objects created before this call are no longer 'magically' included by run
         defaultclock.dt = self._dt
@@ -292,6 +469,8 @@ class BrianExperiment:
         self._network = Network()
 
         self._in_context = True
+
+        self._timing.add_timing("define_network")
 
         return self
 
@@ -311,13 +490,17 @@ class BrianExperiment:
     def __exit__(self, exc_type, exc_value, traceback):
 
         if self._persist:
+
+            self._timing.add_timing("persistence")
+
             flmp = None
             if os.path.isfile(self._path):
                 flmp = FileMap(self._path, mode="modify", object_path=self._opath)
             else:
                 flmp = FileMap(self._path, mode="write", object_path=self._opath)
             with flmp as fm:
-                # persist all data in the persist_data dictionary
+
+                # persist all data in the persist_data dictionary - will be overwritten if keys match automatically persisted entries
                 if self.persist_data:
                     fm["persist_data"] = self.persist_data
 
@@ -377,6 +560,17 @@ class BrianExperiment:
                     fm[mod_name] = Node()
                     for param in self._neuron_parameters:
                         fm[mod_name][param] = module.__dict__[param]
+
+                self._timing.finalize()
+
+                # persist metadata
+                fm["meta"] = self._meta
+
+                # persist timing
+                if self._timing:
+                    fm["meta"]["timing_ns"] = {
+                        k: np.array(v) for k, v in self._timing.timings.items()
+                    }
 
         self._in_context = False
 

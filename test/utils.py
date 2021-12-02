@@ -40,7 +40,7 @@ class TestCase(unittest.TestCase):
 
     def __init__(self, *args, **kwargs):
         self.initial_dir = os.path.abspath(".")
-        self.tmp_base_name = ".tmp"
+        self.tmp_base_name = ".tmp_test"
         self.tmp_dir = os.path.abspath(self.tmp_base_name)
         super().__init__(*args, **kwargs)
 

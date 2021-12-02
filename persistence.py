@@ -9,6 +9,7 @@ Additionally exports:
 
 import numpy as np
 import tables
+import warnings
 
 import re
 import sys
@@ -488,6 +489,13 @@ class FileMap:
 
     # ContextManager Interface
     def __enter__(self):
+
+        # suppress warnings of type tables.NaturalNameWarning - to be able to store invalid path components
+        #   (as defined by the tables module, eg. python keywords or str representations of ints)
+        #  - this prevents from using these components in member access tables.File.<key>
+        #  - which is irrelevant as the tables.File object is wrapped by class Reader or Writer respectively
+        warnings.filterwarnings("ignore", category=tables.NaturalNameWarning)
+
         if self.mode == "write":
             self.file = tables.file.File(self.path, mode="w")
             return Writer(self.file, self.opath)

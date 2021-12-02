@@ -106,3 +106,5 @@ class TestFctGetBrian2BaseUnit(TestCase):
         x = np.arange(10) * ms
         unit = get_brian2_base_unit(x)
         self.assertEqual(unit, second)
+
+    

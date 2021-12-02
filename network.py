@@ -14,10 +14,21 @@ from abc import ABCMeta, abstractproperty
 
 
 from differential_equations.neuron_equations import eqs_P, eqs_I
-from utils import Brian2UnitError, clean_brian2_quantity, get_brian2_base_unit, retrieve_callers_context, retrieve_callers_frame 
+from utils import (
+    Brian2UnitError,
+    clean_brian2_quantity,
+    get_brian2_base_unit,
+    retrieve_callers_context,
+    retrieve_callers_frame,
+)
 from distribution import draw_normal, draw_uniform, draw_uniformely_random_from_values
 
+
 class SpikeDeviceGroup(metaclass=ABCMeta):
+    """
+    Defines Interface for spiking devices and interfaces with :class:`brian2.SpikeMonitor` and :class:`brian2.PopulationRateMonitor`
+    to provide monitoring of spike trains and population rates.
+    """
 
     def __init__(self):
 
@@ -32,40 +43,41 @@ class SpikeDeviceGroup(metaclass=ABCMeta):
     def ids(self):
         pass
 
-
     @property
     def monitored(self):
         """
         :return: dictionary of recorded variables by :class:`brian2.SpikeMonitor` and :class:`brian2.PopulationRateMonitor`
         """
-        
-        data = {}
-        data["device"] = { "class": self.__class__.__name__ }
 
-        if hasattr(self._spike,"t") and len(self._spike.t) != 0:
-            recs = self._spike.all_values()['t']
+        data = {}
+        data["device"] = {"class": self.__class__.__name__}
+
+        if hasattr(self._spike, "t") and len(self._spike.t) != 0:
+            recs = self._spike.all_values()["t"]
             val = list(recs.values())[0]
             unit = val.get_best_unit()
             data["spike"] = {}
             data["spike"]["spike_train"] = {
-                str(k):np.array(v/unit) for k,v in recs.items()
+                str(k): np.array(v / unit) for k, v in recs.items()
             }
-            data["spike"]["meta"] = { "spike_train" : str(unit) }
+            data["spike"]["meta"] = {"spike_train": str(unit)}
 
         if self._rate:
-            data["rate"] = { "meta": {} }
+            data["rate"] = {"meta": {}}
 
-            rec_clean, unit_str = clean_brian2_quantity(self._rate.t.variable.get_value_with_unit())
+            rec_clean, unit_str = clean_brian2_quantity(
+                self._rate.t.variable.get_value_with_unit()
+            )
             data["rate"]["t"] = rec_clean
-            data["rate"] ["meta"]["t"] = unit_str
+            data["rate"]["meta"]["t"] = unit_str
 
-            rec_clean, unit_str = clean_brian2_quantity(self._rate.rate.variable.get_value_with_unit())
+            rec_clean, unit_str = clean_brian2_quantity(
+                self._rate.rate.variable.get_value_with_unit()
+            )
             data["rate"]["rate"] = rec_clean
-            data["rate"]["meta"]["rate"] = unit_str 
-        
-        
-        return data
+            data["rate"]["meta"]["rate"] = unit_str
 
+        return data
 
     def monitor_spike(self, ids: List[int], variables: List[str] = []):
         """
@@ -86,18 +98,20 @@ class SpikeDeviceGroup(metaclass=ABCMeta):
 
         self._spike = SpikeMonitor(self._pop, variables=variables, record=ids_monitored)
 
-    def monitor_rate(self, *args, **kwargs):
+    def monitor_rate(self, **kwargs):
         """
         Register neuron population for rate monitoring
         """
         self._rate = PopulationRateMonitor(self._pop)
-    
+
+
 class PoissonDeviceGroup(SpikeDeviceGroup):
     """
     Convenience class for interfacing with the :class:`brian2.PoissonGroup` of the poisson devices in the population
     """
-    def __init__(self, size: int, rate: Union[Quantity,Callable,str]):
-        
+
+    def __init__(self, size: int, rate: Union[Quantity, Callable, str]):
+
         self._rate_param = rate
         self._devices = PoissonGroup(size, rate)
 
@@ -122,27 +136,70 @@ class PoissonDeviceGroup(SpikeDeviceGroup):
 
     @staticmethod
     @check_units(offset=1, amplitude=1, angular_frequency=Hz, time_shift=ms)
-    def create_time_variant_rate(offset:float=1.0, amplitude:float=1.0, angular_frequency:Quantity=2*np.pi*Hz, time_shift:Quantity=0.*ms):
+    def create_time_variant_rate(
+        offset: float = 1.0,
+        amplitude: float = 1.0,
+        angular_frequency: Quantity = 2 * np.pi * Hz,
+        time_shift: Quantity = 0.0 * ms,
+    ):
         """
         Create a time variant rate to pass to :meth:`PoissonDeviceGroup.__init__()` to create inhomogeneous poisson processes
-        rate: [ms]->[kHz]: t -> (offset + cos((t - time_shift[ms]) * angular_frequency[Hz]) * amplitude) * kHz  
+        rate: [ms]->[kHz]: t -> (offset + cos((t - time_shift[ms]) * angular_frequency[Hz]) * amplitude) * kHz
 
-        :param offset: offset of the rate function 
+        :param offset: offset of the rate function
         :param amplitude: scaling factor for amplitude of the rate function
         :param angular_frequency: angular frequency of the rate function [Hz]
         :param time_shift: time shift of the rate function [ms]
-        :return:  expression representing the time variant rate function, which specifies the rate in khertz per definition
+        :return:  expression representing the time variant rate function, which specifies the rate in kHz per definition
         """
-        return f"({offset} + cos((t - {time_shift/ms} * ms) * {angular_frequency/Hz} * Hz) * {amplitude}) * khertz"
+        return f"({offset} + cos((t - {time_shift/ms} * ms) * {angular_frequency/Hz} * Hz) * {amplitude}) * kHz"
 
 
 class NeuronPopulation(SpikeDeviceGroup):
     """
     Convenience class for interfacing with the :class:`brian2.NeuronGroup` and the respective :class:`brian2.StatusMonitor` of the neurons in the population
+
+
+    Example Instantiation of Neuron Population and Initialization of Membrane Potential
+
+    (note if variable is of same dimension as the neuron population use :prop:`NeuronPopulation.size`
+    instead of :meth:`NeuronPopulation.get_var_size()`)
+
+    .. testsetup::
+
+        import numpy as np
+        from brian2 import mV
+        from network import NeuronPopulation
+        from distribution import draw_normal
+        from BrianExperiment import BrianExperiment
+
+    .. testcode::
+
+        with BrianExperiment():
+            N = NeuronPopulation(1000,'dv/dt = (1-v)/tau : volt')
+            mu = 0.
+            sigma = 1.
+            N.set_pop_var("v", draw_normal(mu=mu, sigma=sigma, size=N.get_pop_var_size("v")) * mV)
+            # N.set_pop_var("v", draw_normal(mu=mu, sigma=sigma, size=N.size) * mV)
+            vals = N.get_pop_var("v") / mV
+            mean = np.mean(vals)
+            std = np.std(vals)
+            print(f"mu:    is w/in 0.1 tolerance ({abs(mean - mu) / sigma < 0.1})")
+            print(f"sigma: is w/in 0.1 tolerance ({abs(std - sigma) / sigma < 0.1})")
+
+    .. testoutput::
+
+        mu:    is w/in 0.1 tolerance (True)
+        sigma: is w/in 0.1 tolerance (True)
+
     """
 
     # add param voltage_init:str=uniform
     def __init__(self, size: int, eqs: str, *args, **kwargs):
+        """
+        :param size: neuron population size
+        :param eqs: eqs used for modelling neuron
+        """
 
         self._population = NeuronGroup(size, eqs, *args, **kwargs)
 
@@ -150,29 +207,59 @@ class NeuronPopulation(SpikeDeviceGroup):
         self._mon = None
         super().__init__()
 
-    def set_population_variable(self, variable:str, value:Quantity):
-        # eg self.set_population_variable("v", draw_normal(size=self.get_population_variable_size("v")) * mV)
+    def set_pop_var(self, variable: str, value: Quantity):
+        """
+        set population variable - variables defined in eqs param of :meth:`NeuronPopulation.__init__()`
+
+        :param variable: name of variable used in eqs
+        :param value: value tb assigned to param variable
+        """
         if not variable in self._pop.variables.keys():
-            raise ValueError(f"No such variable {variable} in neuron population. Available variables: {list(self._pop.variables.keys())}.")
-        shape_pop = np.array(self.get_population_variable(variable)).shape
-        shape_val = np.array(value).shape 
+            raise ValueError(
+                f"No such variable {variable} in neuron population. Available variables: {list(self._pop.variables.keys())}."
+            )
+        shape_pop = np.array(self.get_pop_var(variable)).shape
+        shape_val = np.array(value).shape
         if not shape_pop == shape_val:
-            raise ValueError(f"Parameter value must be of same shape as the neuron population { shape_pop }, but is of shape { shape_val }.")
-        base_unit_pop = get_brian2_base_unit(self.get_population_variable(variable))
+            raise ValueError(
+                f"Parameter value must be of same shape as the neuron population { shape_pop }, but is of shape { shape_val }."
+            )
+        base_unit_pop = get_brian2_base_unit(self.get_pop_var(variable))
         base_unit_val = get_brian2_base_unit(value)
         if not base_unit_pop == base_unit_val:
-            raise Brian2UnitError(f"Base unit of variable { variable } in population does not match base unit of value {value}, {base_unit_pop} and {base_unit_val} respectively.")
+            raise Brian2UnitError(
+                f"Base unit of variable { variable } in population does not match base unit of value {value}, {base_unit_pop} and {base_unit_val} respectively."
+            )
         self._pop.variables[variable].set_value(value)
 
-    def get_population_variable(self, variable:str)->Quantity:
+    def get_pop_var(self, variable: str) -> Quantity:
+        """
+        get population variable - variables defined in eqs param of :meth:`NeuronPopulation.__init__()`
+
+        :param variable: name of variable used in eqs
+        :return: value bound to param variable
+        """
         return self._pop.variables[variable].get_value_with_unit()
 
-    def get_population_variable_size(self, variable:str)->int:
-        return np.array(self.get_population_variable(variable)).size
+    def get_pop_var_size(self, variable: str) -> int:
+        """
+        get size of a population variable - variables defined in eqs param of :meth:`NeuronPopulation.__init__()`
+
+        :param variable: name of variable used in eqs
+        :return: size of value bound to param variable
+        """
+        return np.array(self.get_pop_var(variable)).size
 
     @property
     def _pop(self):
         return self._population
+
+    @property
+    def size(self):
+        """
+        :return: size of the instance of :class:`NeuronPopulation`
+        """
+        return len(self._pop.i)
 
     @property
     def ids(self):
@@ -186,33 +273,37 @@ class NeuronPopulation(SpikeDeviceGroup):
         """
         :return: dictionary of recorded variables and their recorded values
         """
-        
+
         data = super().monitored
         data["device"]["eqs"] = self._eqs
 
         if hasattr(self._mon, "recorded_variables"):
-            data["state"] = { "meta" : {} }
-            rec_clean, unit_str = clean_brian2_quantity(self._mon.t.variable.get_value_with_unit())
+            data["state"] = {"meta": {}}
+            rec_clean, unit_str = clean_brian2_quantity(
+                self._mon.t.variable.get_value_with_unit()
+            )
             data["state"]["t"] = rec_clean
-            data["state"] ["meta"]["t"] = unit_str
+            data["state"]["meta"]["t"] = unit_str
 
-            for k in [*self._mon.recorded_variables.keys()]: 
+            for k in [*self._mon.recorded_variables.keys()]:
                 recs = getattr(self._mon, k)
                 if isinstance(recs, Quantity):
-                    rec_clean, unit_str = clean_brian2_quantity(recs) 
+                    rec_clean, unit_str = clean_brian2_quantity(recs)
                     data["state"][k] = rec_clean
                     data["state"]["meta"][k] = unit_str
                 else:
                     data["state"][k] = recs
-        
+
         return data
 
-    def monitor(self, ids: List[int], variables: List[str] = []):
+    def monitor(self, ids: List[int], variables: List[str] = [], dt: float = None):
         """
         Register neuron ids for monitoring of states neuron variables
 
         :param ids: list of neuron ids whose states are to be monitored for each neuron
         :param variables: list of variables that are to be monitored for each of the neurons
+        :param dt: time step to be used for monitoring - df: None, time step specified in :meth:`BrianExperiment.__init__()`
+                   of enclosing instance of :class:`BrianExperiment` used
         """
 
         missing_vars = [v for v in variables if v not in self._pop.variables.keys()]
@@ -229,7 +320,7 @@ class NeuronPopulation(SpikeDeviceGroup):
         # log after neurons have update
         # valid values see Synapse.monitor (below)
         self._mon = StateMonitor(
-            self._pop, variables, record=ids_monitored, when="after_groups"
+            self._pop, variables, record=ids_monitored, when="after_groups", dt=dt
         )
 
 
@@ -267,19 +358,21 @@ class Synapse:
         """
 
         self._syn_obj = synapse_object
-        
+
         # retrieve top most stack frame of a function call made to a function that does not reside within this file
-        frame_info = retrieve_callers_frame(lambda fi: fi.filename != os.path.abspath(__file__))
+        frame_info = retrieve_callers_frame(
+            lambda fi: fi.filename != os.path.abspath(__file__)
+        )
         context = retrieve_callers_context(frame_info)
         self.source = "Failed to find source in scope"
         self.target = "Failed to find target in scope"
-        for k,v in context.items():
+        for k, v in context.items():
             if isinstance(v, SpikeDeviceGroup):
                 if v._pop == self._syn_obj.source:
-                    self.source = { "name": k, "class" : v.__class__.__name__ }
-            # can be both - autapse
+                    self.source = {"name": k, "class": v.__class__.__name__}
+                # can be both - autapse
                 if v._pop == self._syn_obj.target:
-                    self.target = { "name": k, "class" : v.__class__.__name__ }
+                    self.target = {"name": k, "class": v.__class__.__name__}
 
         self._mon = None
 
@@ -297,19 +390,27 @@ class Synapse:
         """
         :return: dictionary of recorded variables and their recorded values
         """
-        return {
-            "state": {
-                k: getattr(self._mon, k)
-                for k in [*self._mon.recorded_variables.keys(), "t"]
+        return (
+            {
+                "state": {
+                    k: getattr(self._mon, k)
+                    for k in [*self._mon.recorded_variables.keys(), "t"]
+                }
             }
-        } if hasattr(self._mon,"recorded_variables") else {}
+            if hasattr(self._mon, "recorded_variables")
+            else {}
+        )
 
-    def monitor(self, synapses: List[Tuple[int, int]], variables: List[str]):
+    def monitor(
+        self, synapses: List[Tuple[int, int]], variables: List[str], dt: float = None
+    ):
         """
         Register synapses for monitoring
 
         :param synapses: list of synapses defined as a tuple of the pre- and postsynaptic neuron ids that are to be monitored
         :param variables: list of variables that are to be monitored for each of the synapses
+        :param dt: time step to be used for monitoring - df: None, time step specified in :meth:`BrianExperiment.__init__()`
+                   of enclosing instance of :class:`BrianExperiment` used
         """
         missing_vars = [v for v in variables if v not in self._syn_obj.variables.keys()]
         if len(missing_vars) > 0:
@@ -322,7 +423,7 @@ class Synapse:
         # log after synaptic update
         # valid values for when={*, before_*, after_*}, where * in {'start', 'groups', 'thresholds', 'synapses', 'resets', 'end'}
         self._mon = StateMonitor(
-            self._syn_obj, variables, record=ids_monitored, when="after_synapses"
+            self._syn_obj, variables, record=ids_monitored, when="after_synapses", dt=dt
         )
 
 

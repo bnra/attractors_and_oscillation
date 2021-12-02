@@ -1,5 +1,5 @@
 import itertools
-from brian2 import StateMonitor, SpikeMonitor, PopulationRateMonitor, ms, khertz, Hz, mV
+from brian2 import StateMonitor, SpikeMonitor, PopulationRateMonitor, ms, kHz, Hz, mV
 from brian2.units.fundamentalunits import get_unit
 import numpy as np
 
@@ -64,51 +64,51 @@ class TestNeuronPopulation(TestCase):
             self.assertTrue("v" in G.monitored["state"] and G.monitored["state"]["v"].shape[0] == 4 \
                 and G.monitored["state"]["v"].shape[1] == int(5*ms / exp.dt) + 1)
 
-    def test_get_population_variable_when_called_should_return_current_variable(self):
+    def test_get_pop_var_when_called_should_return_current_variable(self):
         N = NeuronPopulation(10,'dv/dt = (1-v)/tau : 1')
-        self.assertTrue(np.all(N.get_population_variable("v") == np.zeros(10) * mV))
+        self.assertTrue(np.all(N.get_pop_var("v") == np.zeros(10) * mV))
 
-    def test_set_population_variable_when_called_with_wrong_key_should_raise_value_error(self):
+    def test_set_pop_var_when_called_with_wrong_key_should_raise_value_error(self):
         N = NeuronPopulation(10,'dv/dt = (1-v)/tau : 1')
         with self.assertRaises(ValueError):
-            N.set_population_variable("bla", np.zeros(10)* mV)
+            N.set_pop_var("bla", np.zeros(10)* mV)
 
-    def test_set_population_variable_when_called_with_value_quantity_of_wrong_length_should_raise_value_error(self):
+    def test_set_pop_var_when_called_with_value_quantity_of_wrong_length_should_raise_value_error(self):
         N = NeuronPopulation(10,'dv/dt = (1-v)/tau : 1')
         with self.assertRaises(ValueError):
-            N.set_population_variable("v", np.zeros(11)* mV)
+            N.set_pop_var("v", np.zeros(11)* mV)
     
-    def test_set_population_variable_when_called_with_value_quantity_of_wrong_shape_should_raise_value_error(self):
+    def test_set_pop_var_when_called_with_value_quantity_of_wrong_shape_should_raise_value_error(self):
         N = NeuronPopulation(10,'dv/dt = (1-v)/tau : 1')
         with self.assertRaises(ValueError):
-            N.set_population_variable("v", np.zeros(10).reshape(2,5)* mV)
+            N.set_pop_var("v", np.zeros(10).reshape(2,5)* mV)
 
-    def test_set_population_variable_when_called_should_set_respective_variable(self):
+    def test_set_pop_var_when_called_should_set_respective_variable(self):
         N = NeuronPopulation(10,'dv/dt = (1-v)/tau : volt')
         value = np.arange(10)* mV
         #raise ValueError(get_unit(N._pop.variables['v'].dim))
-        N.set_population_variable("v", value)
+        N.set_pop_var("v", value)
         #raise ValueError(f"should: {value}, is {N._pop.variables['v'].get_value_with_unit()}")
         self.assertTrue(np.all(N._pop.variables["v"].get_value_with_unit() == value))
 
-    def test_set_population_variable_when_called_with_value_quantity_of_wrong_unit_should_raise_brian2_unit_error(self):
+    def test_set_pop_var_when_called_with_value_quantity_of_wrong_unit_should_raise_brian2_unit_error(self):
         N = NeuronPopulation(10,'dv/dt = (1-v)/tau : volt')
         with self.assertRaises(Brian2UnitError):
-            N.set_population_variable("v", np.arange(10)* ms)
+            N.set_pop_var("v", np.arange(10)* ms)
 
-    def test_set_population_variable_when_called_with_value_quantity_of_other_unit_yet_same_base_unit_should_set_correctly(self):
+    def test_set_pop_var_when_called_with_value_quantity_of_other_unit_yet_same_base_unit_should_set_correctly(self):
         N = NeuronPopulation(10,'dv/dt = (1-v)/tau : volt')
         value = np.arange(10)* mV
-        N.set_population_variable("v", value)
+        N.set_pop_var("v", value)
         self.assertTrue(np.all(N._pop.variables["v"].get_value_with_unit() == value))
 
-    def test_set_population_variable_when_mem_pot_intialized_should_set_mem_pot_appropriately(self):
+    def test_set_pop_var_when_mem_pot_intialized_should_set_mem_pot_appropriately(self):
         N = NeuronPopulation(1000,'dv/dt = (1-v)/tau : volt')
         mu = 0.
         sigma = 1.
-        N.set_population_variable("v", draw_normal(mu=mu, sigma=sigma, size=N.get_population_variable_size("v")) * mV)
+        N.set_pop_var("v", draw_normal(mu=mu, sigma=sigma, size=N.get_pop_var_size("v")) * mV)
         
-        vals = N.get_population_variable("v") / mV
+        vals = N.get_pop_var("v") / mV
         mean = np.mean(vals) 
         std = np.std(vals) 
 
@@ -143,7 +143,7 @@ class TestPoissonDeviceGroup(TestCase):
 
     def test_when_poisson_rate_set_should_evoke_spikes_at_that_rate(self):
         with BrianExperiment(dt=0.1 * ms) as exp:
-            P = PoissonDeviceGroup(1, rate=1 * khertz)
+            P = PoissonDeviceGroup(1, rate=1 * kHz)
             P.monitor_spike(P.ids)
             exp.run(500 * ms)
             self.assertTrue((abs(len(P.monitored["spike"]["spike_train"]["0"]) - 500) / 500) < 0.1)
@@ -164,7 +164,7 @@ class TestPoissonDeviceGroup(TestCase):
 
             exp.run(time_elapsed)
 
-            should = offset * khertz * time_elapsed
+            should = offset * kHz * time_elapsed
             #raise ValueError(should, len(P.monitored["spike"]["spike_train"]["0"]))
             self.assertTrue((abs(len(P.monitored["spike"]["spike_train"]["0"]) - should) / should) < 0.1)
 

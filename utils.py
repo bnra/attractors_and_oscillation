@@ -4,6 +4,7 @@ import re
 from typing import Callable
 import inspect
 from brian2.units.fundamentalunits import Quantity, get_unit
+import numpy as np
 
 
 class TestEnv:
@@ -85,31 +86,67 @@ def generate_sequential_file_name(base_path: str, base_name: str, ext: str):
     return os.path.join(base_path, f"{base_name}_{i}{ext}")
 
 
-def retrieve_callers_frame(condition:Callable[[inspect.FrameInfo],bool]):
+def retrieve_callers_frame(condition: Callable[[inspect.FrameInfo], bool]):
     # find first caller in call stack (excepting top most frame ~ call to this fct)fullfilling condition of the parameter condition
 
     # top most stack frame represents call to this function
     for frame_info in inspect.stack()[1:]:
         if condition(frame_info):
             return frame_info
-    raise Exception(
-        f"No frame satisfying condition { condition } found."
-    )
+    raise Exception(f"No frame satisfying condition { condition } found.")
 
-def retrieve_callers_context(frame_info:inspect.FrameInfo):
+
+def retrieve_callers_context(frame_info: inspect.FrameInfo):
     # retrieve the context: globals updated with locals (ie locals shadow globals if same key in both)
     frame = frame_info.frame
     return {k: v for k, v in [*frame.f_globals.items()] + [*frame.f_locals.items()]}
 
-def clean_brian2_quantity(x:Quantity):
+
+def clean_brian2_quantity(x: Quantity):
     unit = x.get_best_unit()
     return x / unit, str(unit)
 
-def get_brian2_unit(x:Quantity):
+
+def convert_and_clean_brian2_quantity(x: Quantity):
+    """
+    convert to base unit and remove unit
+    """
+    # copies (np.asarray(x) is in-place)
+    unit = get_brian2_base_unit(x)
+    return np.array(x).item(), str(unit)
+
+
+def get_brian2_unit(x: Quantity):
     return x.get_best_unit()
 
-def get_brian2_base_unit(x:Quantity):
+
+def get_brian2_base_unit(x: Quantity):
     return get_unit(x.dim)
+
 
 class Brian2UnitError(Exception):
     pass
+
+
+def parse_duration_ns(t: int):
+    """
+    create string representation of time duration in y, d, h, min, s, ms, mu_s, ns (y:years ~ 365 days)
+
+    :param t: time elapsed in nanoseconds (eg. as a difference of time points or since epoch see :meth:`time.time_ns()`)
+    """
+    t, ns = divmod(t, 1000)
+    t, mu_s = divmod(t, 1000)
+    t, ms = divmod(t, 1000)
+    t, s = divmod(t, 60)
+    t, min = divmod(t, 60)
+    t, h = divmod(t, 24)
+    y, d = divmod(t, 365)
+    comps = [(ns, "ns")]
+    for c, l in zip(
+        [mu_s, ms, s, min, h, d, y], ["mu_s", "ms", "s", "min", "h", "d", "y"]
+    ):
+        if c != 0:
+            comps.append((c, l))
+        else:
+            break
+    return "  ".join([f"{c} {l}" for c, l in comps][::-1])
