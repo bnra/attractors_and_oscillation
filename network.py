@@ -1,14 +1,12 @@
-from typing import Any, Callable, List, Tuple, Dict, Union
+from typing import Callable, List, Tuple, Dict, Union
 from brian2 import NeuronGroup, StateMonitor, ms, check_units
 from brian2.input.poissongroup import PoissonGroup
-from brian2.input.timedarray import TimedArray
 from brian2.monitors.ratemonitor import PopulationRateMonitor
 from brian2.monitors.spikemonitor import SpikeMonitor
 from brian2.synapses.synapses import Synapses
 from brian2.units.fundamentalunits import Quantity
 from brian2.units.stdunits import Hz
 import numpy as np
-import itertools
 import os
 from abc import ABCMeta, abstractproperty
 
@@ -21,7 +19,8 @@ from utils import (
     retrieve_callers_context,
     retrieve_callers_frame,
 )
-from distribution import draw_normal, draw_uniform, draw_uniformely_random_from_values
+from connectivity import all2all, bernoulli
+
 
 
 class SpikeDeviceGroup(metaclass=ABCMeta):
@@ -57,8 +56,15 @@ class SpikeDeviceGroup(metaclass=ABCMeta):
             val = list(recs.values())[0]
             unit = val.get_best_unit()
             data["spike"] = {}
+            # commented out is slower than impl alternative below
+            # sp_data = self._spike.get_states()
+            # times, unit = clean_brian2_quantity(sp_data["t"])
+            # data["spike"]["ids"], data["spike"]["spike_times"] = (
+            #     sp_data["i"],
+            #     times,
+            # )
             data["spike"]["spike_train"] = {
-                str(k): np.array(v / unit) for k, v in recs.items()
+                str(k): np.asarray(v / unit) for k, v in recs.items()
             }
             data["spike"]["meta"] = {"spike_train": str(unit)}
 
@@ -77,6 +83,7 @@ class SpikeDeviceGroup(metaclass=ABCMeta):
             data["rate"]["rate"] = rec_clean
             data["rate"]["meta"]["rate"] = unit_str
 
+
         return data
 
     def monitor_spike(self, ids: List[int], variables: List[str] = []):
@@ -84,7 +91,7 @@ class SpikeDeviceGroup(metaclass=ABCMeta):
         Register neuron ids for monitoring of spikes and related variables of neurons
 
         :param ids: list of neuron ids that are to be monitored on spike for each neuron
-        :param variables: list of neuron variables that are to be monitored additionally to the neuron id for each spike, df:[]
+        :param variables: list of neuron variables that are to be monitored additionally to the neuron id for each spike
         """
         missing_vars = [v for v in variables if v not in self._pop.variables.keys()]
         if len(missing_vars) > 0:
@@ -277,6 +284,7 @@ class NeuronPopulation(SpikeDeviceGroup):
         data = super().monitored
         data["device"]["eqs"] = self._eqs
 
+
         if hasattr(self._mon, "recorded_variables"):
             data["state"] = {"meta": {}}
             rec_clean, unit_str = clean_brian2_quantity(
@@ -302,7 +310,7 @@ class NeuronPopulation(SpikeDeviceGroup):
 
         :param ids: list of neuron ids whose states are to be monitored for each neuron
         :param variables: list of variables that are to be monitored for each of the neurons
-        :param dt: time step to be used for monitoring - df: None, time step specified in :meth:`BrianExperiment.__init__()`
+        :param dt: time step to be used for monitoring - time step specified in :meth:`BrianExperiment.__init__()`
                    of enclosing instance of :class:`BrianExperiment` used
         """
 
@@ -409,7 +417,7 @@ class Synapse:
 
         :param synapses: list of synapses defined as a tuple of the pre- and postsynaptic neuron ids that are to be monitored
         :param variables: list of variables that are to be monitored for each of the synapses
-        :param dt: time step to be used for monitoring - df: None, time step specified in :meth:`BrianExperiment.__init__()`
+        :param dt: time step to be used for monitoring - time step specified in :meth:`BrianExperiment.__init__()`
                    of enclosing instance of :class:`BrianExperiment` used
         """
         missing_vars = [v for v in variables if v not in self._syn_obj.variables.keys()]
@@ -442,9 +450,7 @@ class Connector:
                 source, dest, **kwargs
             )
         elif synapse_type == "hebbian":
-            self.synapse_type = lambda source, dest, **kwargs: Synapses(
-                source, dest, **kwargs
-            )
+            raise NotImplementedError(f"Synapse type { synapse_type } not implemented.")
         else:
             raise ValueError(
                 f"No such synapse type. Available types: static | hebbian."
@@ -475,9 +481,11 @@ class Connector:
         :return: instance of :class:`Synapse` which allows interacting with the synapses created
         """
 
+        source_pop_ids = sourcePop.ids
+        dest_pop_ids = destPop.ids
         if not all(
-            [sid in sourcePop.ids for sid in sourceIds]
-            + [did in destPop.ids for did in destIds]
+            [sid in source_pop_ids for sid in sourceIds]
+            + [did in dest_pop_ids for did in destIds]
         ):
             raise ValueError(
                 "Some ids in parameter sourceIds or destIds are not contained in sourcePop or destPop, respectively."
@@ -488,9 +496,7 @@ class Connector:
         if isinstance(connect, tuple):
             ct, params = connect
             if ct == "all2all":
-                frm, to = [
-                    np.array(e) for e in zip(*[*itertools.product(sourceIds, destIds)])
-                ]
+                frm, to = all2all(sourceIds, destIds)
                 syn.connect(i=frm, j=to)
             elif ct == "one2one":
                 # maps linearly in order of provided ids
@@ -507,7 +513,12 @@ class Connector:
                         "Specify 'p' in parameter connect=('bernoulli', {'p': x })."
                         + f" Is {params}."
                     )
-                syn.connect(i=sourceIds, j=destIds, p=params["p"])
+
+                frm, to = bernoulli(sourceIds, destIds, params["p"])
+                # only connect if sample contains synapses (note frm.size == to.size)
+                if frm.size > 0:
+                    syn.connect(i=frm, j=to)
+
             else:
                 raise ValueError(
                     f"No such topology { ct }. Choose from all2all | one2one | bernoulli."

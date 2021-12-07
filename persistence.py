@@ -340,13 +340,14 @@ class Writer(Reader):
             for nn, vv in value.items():
                 # recursion
                 node[nn] = vv
-        elif isinstance(value, np.ndarray) or (
-            (isinstance(value, List) or isinstance(value, Tuple))
-            and (len(value) == 0 or all([np.isscalar(v) for v in value]))
-        ):
-            self.file.create_array(self.opath, key, obj=np.array(value))
+        elif isinstance(value, np.ndarray):
+             self.file.create_array(self.opath, key, obj=value)
+        elif isinstance(value, List) or isinstance(value, Tuple):
+            # nested lists or tuples are interpreted as array of specific shape
+            # for ragged nesting [0,1,[2],3] -> raises TypeError
+            self.file.create_array(self.opath, key, obj=np.asarray(value))
         elif isinstance(value, str) or isinstance(value, np.string_):
-            self.file.create_array(self.opath, key, obj=np.array([value]))
+            self.file.create_array(self.opath, key, obj=np.asarray([value]))
         else:
             raise ValueError(
                 f"No such value type for parameter value supported. Is {type(value)}:\n{value}"

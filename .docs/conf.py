@@ -33,7 +33,9 @@ autodoc_typehints = "description"
 
 autoapi_type = "python"
 autoapi_dirs = ["..", "."]
-autoapi_ignore = ['**/.docs/*', '**/test/*', '*migrations*']
+autoapi_ignore = ['**/.docs/*', '**/test/*', '**/scripts/*', '*migrations*']
+
+modules_skipped = ['run_speed_test']
 
 #autodoc_default_options = {
 #    'members': True,
@@ -50,9 +52,18 @@ def do_not_skip_special_members(app, what, name, obj, skip, options):
     if what == "method" and "__" in name:
         skip = False
     return skip
-def setup(sphinx):
-    sphinx.connect("autoapi-skip-member", do_not_skip_special_members)
 
+# unfortunately it only prevents from showing in the api reference
+#  shows in index, module index and search page
+def skip_specific_models(app, what, name, obj, skip, options):
+    if what == "module" and name in modules_skipped:
+        skip=True
+    return skip
+
+
+def setup(sphinx):
+    sphinx.connect("autoapi-skip-member", skip_specific_models)
+    sphinx.connect("autoapi-skip-member", do_not_skip_special_members)
 
 
 # Add any paths that contain templates here, relative to this directory.

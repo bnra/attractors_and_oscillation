@@ -145,7 +145,7 @@ class TestClassBrianExperiment(TestCase):
             E = NeuronPopulation(4,  eqs_P, threshold='v_s>-30*mV', refractory=1.3*ms, method='rk4')
 
             connect = Connector()
-            syn_ee = connect(E, E, E.ids, E.ids, connect=("bernoulli",{"p":0.01}), on_pre=PreEq_AMPA, delay=delay_AMPA)
+            syn_ee = connect(E, E, E.ids, E.ids, connect=("bernoulli",{"p":0.5}), on_pre=PreEq_AMPA, delay=delay_AMPA)
             syn_ee.monitor(syn_ee.synapses, variables=["x_AMPA"])
 
             exp.run(5*ms)
@@ -210,7 +210,7 @@ class TestClassBrianExperiment(TestCase):
             E.monitor_spike(E.ids)
 
             connect = Connector(synapse_type="static")
-            syn_pp = connect(E, E, E.ids, E.ids, connect=("bernoulli", {"p":0.01}), on_pre=PreEq_AMPA, delay=delay_AMPA)
+            syn_pp = connect(E, E, E.ids, E.ids, connect=("bernoulli", {"p":0.5}), on_pre=PreEq_AMPA, delay=delay_AMPA)
             syn_pp.monitor(syn_pp.synapses, ["x_AMPA"])
 
 
@@ -243,31 +243,3 @@ class TestClassBrianExperiment(TestCase):
             
         
 
-
-
-    ## check whether NeuronPopulations are autosaved
-
-
-
-    # ## check whether synapses are automatically updated
-    # from network import NeuronPopulation, Connector
-    # from brian2 import run,ms
-    # with BrianExperiment(path="file.h5"):
-
-    #     tau = 10*ms
-    #     eqs = '''
-    #     dv/dt = (1-v)/tau : 1
-    #     '''
-
-    #     # threhsolder is what creates the spikes
-    #     E = NeuronPopulation(4, eqs, threshold='v > 0.6', reset="v=0", method="rk4")
-    #     I = NeuronPopulation(1, eqs, threshold='v > 0.6', reset="v=0", method="rk4")
-
-    #     connector = Connector()
-    #     syn_ee = connector(E, I, E.ids, I.ids, connect=("bernoulli",{"p":0.01}))
-
-    #     run(100*ms)
-
-    # ## check whether all neuron equations are persisted
-    # with BrianExperiment(path="file.h5", neuron_eqs=["some_eq"], neuron_params=["some_param"]):
-    #     pass

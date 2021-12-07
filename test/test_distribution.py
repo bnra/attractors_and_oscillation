@@ -1,4 +1,4 @@
-from distribution import draw_normal, draw_uniform, draw_uniformely_random_from_values
+from distribution import draw_bernoulli, draw_normal, draw_uniform, draw_uniformly_random_from_values
 from test.utils import TestCase
 import numpy as np
 
@@ -31,11 +31,19 @@ class TestFctDrawNormal(TestCase):
         std = np.std(vals)
         self.assertTrue(abs(mu-mean) < 0.1 and (sigma - std) / sigma < 0.1)
 
+class TestFctDrawBernoulli(TestCase):    
+    def test_when_called_should_draw_randomly_from_bernoulli_distribution(self):
+        n = 1000
+        p = 0.3
+        vals = draw_bernoulli(p=p, size=n)
+        self.assertTrue(abs(n*p - np.sum(vals))/ (n * p) < 0.1)
+
+
 class TestFctDrawUniformelyRandomFromValues(TestCase):
-    def test_when_called_should_draw_uniformely_random_from_passed_values(self):
+    def test_when_called_should_draw_uniformly_random_from_passed_values(self):
         n = 3000
         val_range = 10
-        vals = draw_uniformely_random_from_values(np.arange(val_range), size=n)
+        vals = draw_uniformly_random_from_values(np.arange(val_range), size=n)
         bins = [0 for _ in range(val_range)]
         for v in vals:
             bins[v] += 1

@@ -21,7 +21,7 @@ from utils import (
     clean_brian2_quantity,
     convert_and_clean_brian2_quantity,
     generate_sequential_file_name,
-    parse_duration_ns,
+    format_duration_ns,
     retrieve_callers_context,
     retrieve_callers_frame,
     validate_file_path,
@@ -33,6 +33,9 @@ class TqdmCallBack(tqdm):
     """Provide progress bar updatable via callback based on :class:`tqdm` via :meth:`tqdm.update()`"""
 
     def __init__(self, report_freq: Quantity, *args, **kwargs):
+        """
+        :param report_freq: frequency [ms] at which to report progress during the simulation stage - throws exception if not specified in unit :attr:`brian2.ms`
+        """
         self.w = None
         self.dec = 3
         if (
@@ -87,51 +90,54 @@ class TqdmCallBack(tqdm):
 
 class TimeTracker:
     """
-    track time durations of processes in sequence
+    track time durations of sequential stages of a process
     """
 
     def __init__(self, verbose: bool = False):
-        self.last_proc = None
+        """
+        :param verbose: whether to notify on beginning and ending of each of the stages (including duration) - prints to stdout
+        """
+        self.last_stage = None
         self._timings = {}
         self.last_stamp = None
         self._verbose = verbose
 
     def add_timing(self, process: str):
         """
-        add a new process - this marks the end of the previous process if it exists
+        add a new stage - this marks the end of the previous stage if it exists
         """
         tt = time.time_ns()
 
-        if self.last_proc:
-            self._timings[self.last_proc] = tt - self.last_stamp
+        if self.last_stage:
+            self._timings[self.last_stage] = tt - self.last_stamp
 
             if self.verbose:
                 print(
-                    f"Process {self.last_proc} done.\n({parse_duration_ns(self._timings[self.last_proc])})"
+                    f"Stage {self.last_stage} done.\n({format_duration_ns(self._timings[self.last_stage])})"
                 )
         if self.verbose:
-            print(f"\nStarting process {process}\n...")
+            print(f"\nStarting stage {process}\n...")
 
-        self.last_proc = process
+        self.last_stage = process
         self.last_stamp = tt
 
     def finalize(self):
         """
-        end the previous process without beginnning a new process
+        end the previous stage without beginnning a new stage
         """
-        if not self.last_proc:
+        if not self.last_stage:
             raise Exception(
                 "You cannot call finalize() when you haven't called add_timing() since the last call to finalize()"
             )
         tt = time.time_ns()
-        self._timings[self.last_proc] = tt - self.last_stamp
+        self._timings[self.last_stage] = tt - self.last_stamp
 
         if self.verbose:
             print(
-                f"Process {self.last_proc} done.\n({parse_duration_ns(self._timings[self.last_proc])})"
+                f"Stage {self.last_stage} done.\n({format_duration_ns(self._timings[self.last_stage])})"
             )
 
-        self.last_proc = None
+        self.last_stage = None
         self.last_stamp = None
 
     @property
@@ -239,7 +245,8 @@ class BrianExperiment:
     def __init__(
         self,
         dt: Quantity = 0.01 * ms,
-        report_progress: bool = True,
+        report_progress: bool = False,
+        progress_bar: bool = False,
         persist: bool = False,
         path: str = "",
         object_path: str = "/",
@@ -252,10 +259,12 @@ class BrianExperiment:
         To add additional data set it on dictionary-like :attr:`BrianExperiment.persist_data`.
 
         :param dt: time step of default clock (:data:`brian2.core.clocks.defaultclock`) used as df for all :module:`brian2` objects
-        :param report_progress: print updates on respective state of the simulation: network definition, device collection, running simulation, persisting
+        :param report_progress:  print updates on respective stage of the experiment:
+                                network definition, device collection, simulation, persisting
+        :param progress_bar: show progress bar during simulation (cli) stage of experiment (see also param report progress)
         :param persist: specifies whether data is tb persisted
-        :param path: path to the file to be used for persisting - df:None, if not set and persist=True will automatically generate file name 'experiments/experiment_i'
-        :param object_path: path within the hdf5 file starting with root '/', eg. '/run_x/data', df:'/'
+        :param path: path to the file to be used for persisting - if not set and persist=True will automatically generate file name 'experiments/experiment_i'
+        :param object_path: path within the hdf5 file starting with root '/', eg. '/run_x/data'
         :param neuron_eqs: neuron equations to persist - verified against :attr:`BrianExperiment.neuron_eq_module`
         :param neuron_params: neuron parameters to persist - verified against :attr:`BrianExperiment.neuron_param_module`
         """
@@ -312,6 +321,7 @@ class BrianExperiment:
         self._network = None
 
         self._timing = TimeTracker(verbose=report_progress)
+        self._progress_bar = progress_bar
 
         self._meta = {}
 
@@ -327,7 +337,7 @@ class BrianExperiment:
         """
         str representing time elapsed during simulation, None if :meth:`BrianExperiment.run()` not executed yet
         """
-        return str({k: parse_duration_ns(v["duration"]) for k, v in self._timing})
+        return str({k: format_duration_ns(v["duration"]) for k, v in self._timing})
 
     @property
     def persist_data(self):
@@ -424,7 +434,7 @@ class BrianExperiment:
         run brian2 network via :meth:`brian2.network.run()`
 
         :param t: time for which the simulation is tb run
-        :param report_freq: frequency at which the report is updated - df: 100 * ms,
+        :param report_freq: frequency at which the report is updated,
                             irrelevant if progress_report=False in :meth:`BrianExperiment.__init__()`
         """
 
@@ -440,7 +450,7 @@ class BrianExperiment:
 
         self._timing.add_timing(process="simulation")
 
-        if self._timing.verbose:
+        if self._progress_bar:
             with TqdmCallBack(miniters=1, report_freq=report_freq) as tqdm:
 
                 self._network.run(
@@ -508,22 +518,28 @@ class BrianExperiment:
 
                 fm[SpikeDeviceGroup.__name__] = Node()
                 neurp = fm[SpikeDeviceGroup.__name__]
-                for i, (k, v) in enumerate(
-                    [
-                        (k, v)
-                        for k, v in self._retrieve_callers_context().items()
-                        if isinstance(v, SpikeDeviceGroup)
-                    ]
-                ):
+
+                spike_devs = [
+                    (k, v)
+                    for k, v in self._retrieve_callers_context().items()
+                    if isinstance(v, SpikeDeviceGroup)
+                ]
+
+                for i, (k, v) in enumerate(spike_devs):
                     neurp[k] = Node()
-                    neurp[k]["ids"] = v.ids
+                    # neurp[k] = v.monitored
+
+                    neurp[k]["ids"] = np.asarray(v.ids)
+
                     mon_data = v.monitored
+
 
                     for mon in mon_data.keys():
                         neurp[k][mon] = Node()
                         for var, val in mon_data[mon].items():
-                            # note that np.array on ndarrays is idempotent
                             neurp[k][mon][var] = val
+
+
 
                 # persist all synapses
                 fm[Synapse.__name__] = Node()
@@ -536,12 +552,12 @@ class BrianExperiment:
                     sn[k] = Node()
                     sn[k]["source"] = v.source
                     sn[k]["target"] = v.target
-                    sn[k]["ids"] = np.array(v.synapses)
+                    sn[k]["ids"] = np.asarray(v.synapses)
                     mon_data = v.monitored
                     for mon in mon_data.keys():
                         sn[k][mon] = Node()
                         for var, val in mon_data[mon].items():
-                            sn[k][mon][var] = np.array(val)
+                            sn[k][mon][var] = np.asarray(val)
 
                 # persist all equations passed in __init__()
                 if self._neuron_equations:
@@ -561,7 +577,6 @@ class BrianExperiment:
                     for param in self._neuron_parameters:
                         fm[mod_name][param] = module.__dict__[param]
 
-                self._timing.finalize()
 
                 # persist metadata
                 fm["meta"] = self._meta
@@ -571,6 +586,14 @@ class BrianExperiment:
                     fm["meta"]["timing_ns"] = {
                         k: np.array(v) for k, v in self._timing.timings.items()
                     }
+
+
+
+        self._timing.add_timing("reset_context")
+
+        self._reset_context()
+
+        self._timing.finalize()
 
         self._in_context = False
 

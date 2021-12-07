@@ -7,3 +7,8 @@
     - for any monitored variable save as ndarray with dims r x t, where
       r is the row index of the synapse in the ndarray of the synapse ids
       and t is the time point of the specific sampling
+
+
+## bernoulli connectivity - comparison of brian syn.connect(from, to, p=p) and connectivity.bernoulli generation
+- speed: brian.bernoulli/connectivity.bernoulli = 10
+- with np.random.seed set we get the same connectivity (same synaptic connections) for both

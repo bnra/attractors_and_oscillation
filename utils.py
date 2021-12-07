@@ -1,9 +1,9 @@
 import os
 import shutil
 import re
-from typing import Callable
+from typing import Any, Callable, Dict, List, Tuple
 import inspect
-from brian2.units.fundamentalunits import Quantity, get_unit
+from brian2.units.fundamentalunits import Quantity, get_unit, Unit
 import numpy as np
 
 
@@ -87,6 +87,12 @@ def generate_sequential_file_name(base_path: str, base_name: str, ext: str):
 
 
 def retrieve_callers_frame(condition: Callable[[inspect.FrameInfo], bool]):
+    """
+    retrieve the frame satisfying a condition - if no such frame raises Exception
+
+    :param condition: condition to test for the frame in question
+    :return: first frame in stack passing the condition
+    """
     # find first caller in call stack (excepting top most frame ~ call to this fct)fullfilling condition of the parameter condition
 
     # top most stack frame represents call to this function
@@ -97,42 +103,75 @@ def retrieve_callers_frame(condition: Callable[[inspect.FrameInfo], bool]):
 
 
 def retrieve_callers_context(frame_info: inspect.FrameInfo):
+    """
+    retrieve the context for a frame
+    - context: globals updated with locals
+
+    :param frame_info: the information object of a frame for which context is tb retrieved
+    :return: context of the respective frame of the encapsulating information  object
+    """
     # retrieve the context: globals updated with locals (ie locals shadow globals if same key in both)
     frame = frame_info.frame
     return {k: v for k, v in [*frame.f_globals.items()] + [*frame.f_locals.items()]}
 
 
-def clean_brian2_quantity(x: Quantity):
+def clean_brian2_quantity(x: Quantity) -> Tuple[np.ndarray, str]:
+    """
+    clean quantity of its unit
+
+    :param x: quantity cleaned of its unit
+    :return: cleaned quantity with unit scaling, and string representation of the unit
+    """
     unit = x.get_best_unit()
     return x / unit, str(unit)
 
 
-def convert_and_clean_brian2_quantity(x: Quantity):
+def convert_and_clean_brian2_quantity(x: Quantity) -> Tuple[np.ndarray, str]:
     """
-    convert to base unit and remove unit
+    convert quantity to base unit and clean of its base unit
+
+    :param x: quantity which is tb converted to base unit and then cleaned of its unit
+    :return: cleaned quantity with base unit scaling, and string representation of the base unit
     """
     # copies (np.asarray(x) is in-place)
     unit = get_brian2_base_unit(x)
-    return np.array(x).item(), str(unit)
+    return np.asarray(x).item(), str(unit)
 
 
-def get_brian2_unit(x: Quantity):
+def get_brian2_unit(x: Quantity) -> Unit:
+    """
+    get brian2 unit of quantity
+
+    :param x: quantity for which unit is tb determined
+    :return: unit of quantity parameter x
+    """
     return x.get_best_unit()
 
 
-def get_brian2_base_unit(x: Quantity):
+def get_brian2_base_unit(x: Quantity) -> Unit:
+    """
+    get brian2 base unit of quantity - basic unscaled unit
+
+    :param x: quantity for which base unit is tb determined
+    :return: base unit of quantity parameter x
+    """
     return get_unit(x.dim)
 
 
 class Brian2UnitError(Exception):
+    """
+    when instance of :class:`Brian2.Unit` does not match the expected unit
+    """
+
     pass
 
 
-def parse_duration_ns(t: int):
+def format_duration_ns(t: int):
     """
     create string representation of time duration in y, d, h, min, s, ms, mu_s, ns (y:years ~ 365 days)
 
     :param t: time elapsed in nanoseconds (eg. as a difference of time points or since epoch see :meth:`time.time_ns()`)
+    :return: string representation of time with format: y, d, h, min, s, ms, mu_s, ns - where only duration components whose first increment is reached are used
     """
     t, ns = divmod(t, 1000)
     t, mu_s = divmod(t, 1000)

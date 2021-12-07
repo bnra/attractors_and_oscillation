@@ -158,7 +158,7 @@ class TestClassWriter(TestCase):
     def test_when_assigning_nested_list_should_raise_value_error(self):
         path = "file2.h5"
 
-        with self.assertRaises(ValueError):
+        with self.assertRaises(TypeError):
             with FileMap(path, mode="write") as w:
                 w["a"] = [0,2,[0],2,3]
 
@@ -176,7 +176,7 @@ class TestClassWriter(TestCase):
     def test_when_assigning_list_of_objects_should_raise_value_error(self):
         path = "file2.h5"
 
-        with self.assertRaises(ValueError):
+        with self.assertRaises(TypeError):
             with FileMap(path, mode="write") as w:
                 w["a"] = [object() for i in range(3)]
 
@@ -187,7 +187,7 @@ class TestClassWriter(TestCase):
             pass
         x = f
 
-        with self.assertRaises(ValueError):
+        with self.assertRaises(TypeError):
             with FileMap(path, mode="write") as w:
                 w["a"] = [x for i in range(3)]
         
