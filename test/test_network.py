@@ -65,6 +65,34 @@ class TestNeuronPopulation(TestCase):
             self.assertTrue("v" in G.monitored["state"] and G.monitored["state"]["v"].shape[0] == 4 \
                 and G.monitored["state"]["v"].shape[1] == int(5*ms / exp.dt) + 1)
 
+
+
+    def test_monitored_when_experiment_run_with_monitor_spike_registered_and_no_spikes_occur_should_add_appropriate_key_to_monitored(self):
+        with BrianExperiment(persist = True, path = "file.h5") as exp:
+            G = NeuronPopulation(4, 'dv/dt=(1-v)/(10*ms):1', threshold = 'v > 0.6', reset = "v=0", method = "rk4")
+            G.monitor_spike(G.ids)
+            exp.run(5 * ms)
+            self.assertTrue("spike" in G.monitored and G.monitored["spike"] == {'spike_train' : {}, 'meta' : {'spike_train' : 's' } })
+            
+
+    def test_monitored_when_experiment_run_with_monitor_rate_registered_and_no_spikes_occur_should_add_appropriate_key_to_monitored(self):
+        dt = 0.01
+        dur = 1.0
+        with BrianExperiment(dt=dt*ms, persist = True, path = "file.h5") as exp:
+            G = NeuronPopulation(4, 'dv/dt=(1-v)/(10*ms):1', threshold = 'v > 0.6', reset = "v=0", method = "rk4")
+            G.monitor_rate()
+            exp.run(dur * ms)
+            
+            # diff = []
+            # for n,(i,j) in enumerate(zip(G.monitored["rate"]["t"], np.arange(0.0,dur,dt, dtype=np.float64))):
+            #     if not np.allclose(i,j):
+            #         diff.append((n,i,j))
+            
+            self.assertTrue("rate" in G.monitored and np.allclose(G.monitored["rate"]["t"], np.arange(0.0,dur,dt, dtype=np.float64)), 
+                np.allclose(G.monitored["rate"]["rate"], np.zeros(int(dur) * int(1/dt))))
+
+
+
     def test_get_pop_var_when_called_should_return_current_variable(self):
         N = NeuronPopulation(10,'dv/dt = (1-v)/tau : 1')
         self.assertTrue(np.all(N.get_pop_var("v") == np.zeros(10) * mV))

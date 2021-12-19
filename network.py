@@ -16,11 +16,12 @@ from utils import (
     Brian2UnitError,
     clean_brian2_quantity,
     get_brian2_base_unit,
+    convert_and_clean_brian2_quantity,
     retrieve_callers_context,
     retrieve_callers_frame,
+    unique_idx,
 )
 from connectivity import all2all, bernoulli
-
 
 
 class SpikeDeviceGroup(metaclass=ABCMeta):
@@ -51,24 +52,22 @@ class SpikeDeviceGroup(metaclass=ABCMeta):
         data = {}
         data["device"] = {"class": self.__class__.__name__}
 
-        if hasattr(self._spike, "t") and len(self._spike.t) != 0:
-            recs = self._spike.all_values()["t"]
-            val = list(recs.values())[0]
-            unit = val.get_best_unit()
+        if hasattr(self._spike, "t"):
+
+            states = self._spike.get_states()
+            idx, vals = states["i"], states["t"]
+            ids, indices = unique_idx(idx)
+            vals, unit = convert_and_clean_brian2_quantity(vals)
+
             data["spike"] = {}
-            # commented out is slower than impl alternative below
-            # sp_data = self._spike.get_states()
-            # times, unit = clean_brian2_quantity(sp_data["t"])
-            # data["spike"]["ids"], data["spike"]["spike_times"] = (
-            #     sp_data["i"],
-            #     times,
-            # )
+
             data["spike"]["spike_train"] = {
-                str(k): np.asarray(v / unit) for k, v in recs.items()
+                str(i): np.sort(vals[idx]) for i, idx in zip(ids, indices)
             }
+
             data["spike"]["meta"] = {"spike_train": str(unit)}
 
-        if self._rate:
+        if self._rate != None:
             data["rate"] = {"meta": {}}
 
             rec_clean, unit_str = clean_brian2_quantity(
@@ -82,7 +81,6 @@ class SpikeDeviceGroup(metaclass=ABCMeta):
             )
             data["rate"]["rate"] = rec_clean
             data["rate"]["meta"]["rate"] = unit_str
-
 
         return data
 
@@ -283,7 +281,6 @@ class NeuronPopulation(SpikeDeviceGroup):
 
         data = super().monitored
         data["device"]["eqs"] = self._eqs
-
 
         if hasattr(self._mon, "recorded_variables"):
             data["state"] = {"meta": {}}

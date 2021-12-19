@@ -36,7 +36,7 @@ class TestFctDrawBernoulli(TestCase):
         n = 1000
         p = 0.3
         vals = draw_bernoulli(p=p, size=n)
-        self.assertTrue(abs(n*p - np.sum(vals))/ (n * p) < 0.1)
+        self.assertTrue(abs(n*p - np.sum(vals))/ (n * p) < 0.15)
 
 
 class TestFctDrawUniformelyRandomFromValues(TestCase):

@@ -8,7 +8,12 @@
       r is the row index of the synapse in the ndarray of the synapse ids
       and t is the time point of the specific sampling
 
-
+## SpikeDeviceGroup.monitored
+    # SpikeMonitor.get_states() vs SpikeMonitor.all_values()
+    #  Result persist_exp.SpikeMonitorGetStates: 3 s  368 ms  857 mu_s  837 ns 
+    #  Result persist_exp.SpikeMonitorAllValues: 5 s  38 ms  446 mu_s  682 ns 
+    # check respective speed test
+    
 ## bernoulli connectivity - comparison of brian syn.connect(from, to, p=p) and connectivity.bernoulli generation
 - speed: brian.bernoulli/connectivity.bernoulli = 10
 - with np.random.seed set we get the same connectivity (same synaptic connections) for both

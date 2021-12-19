@@ -23,4 +23,3 @@ Interaction between oscillation and attractor dynamics
     $python -m unittest
 
 - see test/Readme.md for more info
-

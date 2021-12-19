@@ -312,6 +312,11 @@ class BrianExperiment:
                 + " or/and neuron_params tb persisted were passed but persist is not set. Please set persist=True to persist data."
             )
 
+        if os.path.isfile(path):
+            raise ValueError(
+                f"File {path} already exists. If you want to 'overwrite', please delete it manually."
+            )
+
         self._persist = persist
         self._dt = dt
         self._path = os.path.abspath(path) if path else None
@@ -337,7 +342,7 @@ class BrianExperiment:
         """
         str representing time elapsed during simulation, None if :meth:`BrianExperiment.run()` not executed yet
         """
-        return str({k: format_duration_ns(v["duration"]) for k, v in self._timing})
+        return str({k: format_duration_ns(v) for k, v in self._timing.timings.items()})
 
     @property
     def persist_data(self):
@@ -472,7 +477,6 @@ class BrianExperiment:
         # save local context to restore on exit and clear local context added within the context
         self._save_context()
 
-        # all objects created before this call are no longer 'magically' included by run
         defaultclock.dt = self._dt
 
         # create network and register with class variable
@@ -503,11 +507,7 @@ class BrianExperiment:
 
             self._timing.add_timing("persistence")
 
-            flmp = None
-            if os.path.isfile(self._path):
-                flmp = FileMap(self._path, mode="modify", object_path=self._opath)
-            else:
-                flmp = FileMap(self._path, mode="write", object_path=self._opath)
+            flmp = FileMap(self._path, mode="write", object_path=self._opath)
             with flmp as fm:
 
                 # persist all data in the persist_data dictionary - will be overwritten if keys match automatically persisted entries
@@ -533,13 +533,10 @@ class BrianExperiment:
 
                     mon_data = v.monitored
 
-
                     for mon in mon_data.keys():
                         neurp[k][mon] = Node()
                         for var, val in mon_data[mon].items():
                             neurp[k][mon][var] = val
-
-
 
                 # persist all synapses
                 fm[Synapse.__name__] = Node()
@@ -577,7 +574,6 @@ class BrianExperiment:
                     for param in self._neuron_parameters:
                         fm[mod_name][param] = module.__dict__[param]
 
-
                 # persist metadata
                 fm["meta"] = self._meta
 
@@ -586,8 +582,6 @@ class BrianExperiment:
                     fm["meta"]["timing_ns"] = {
                         k: np.array(v) for k, v in self._timing.timings.items()
                     }
-
-
 
         self._timing.add_timing("reset_context")
 

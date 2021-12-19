@@ -99,8 +99,20 @@ class Reader:
         key: str,
         nodes: Tuple[Dict[str, tables.group.Group]],
         leaves: Dict[str, Union[tables.array.Array, tables.vlarray.VLArray]],
+        recursive: bool = False,
     ):
+        """
+        extract values
+
+        :param recursive: whether to read all descendants into memory recursively
+        :return: instance of :class:`persistence.Reader` or a terminal node read into memory,
+                 if recursive set will return dictionary with all descendants read into memory or
+                 a terminal node read into memory
+        """
         if key in nodes.keys():
+            if recursive:
+                return self.__class__(self.file, opath.join(self.opath, key)).load()
+
             return self.__class__(self.file, opath.join(self.opath, key))
         else:
             if key in leaves.keys():
@@ -145,9 +157,21 @@ class Reader:
             for k in set(list(nodes.keys()) + list(leaves.keys()))
         ]
 
+    def load(self):
+        """
+        convert instance of this class to a dictionary - fully loads all descendants recursively
+
+        :return: dictionary containing all descendants of the instance of this class recursively
+        """
+        nodes, leaves = get_nodes(self.file, self.opath)
+        return {
+            k: self._extract_value(k, nodes, leaves, recursive=True)
+            for k in set(list(nodes.keys()) + list(leaves.keys()))
+        }
+
     def _as_dict(self, slice_length=10, full_load=False):
         """
-        Create a dictionary from .h5 file abstraction
+        Create a dictionary from .h5 file abstraction creating string representations of leaf nodes and slicing arrays and strings
 
         :param slice_length: length of slices used to represent arrays in leaf nodes as str and twice the length is used for slicing strings
         :param full_load: if True reads the entire array from the underlying as :class:`numpy.ndarray`
@@ -318,7 +342,9 @@ class Writer(Reader):
         key: str,
         value: Union[np.ndarray, Array, VArray, Node, Dict, List, Tuple, str],
     ):
-
+        # Underlying tables module can only deal with instances that are not void, unicode, or object arrays
+        # - in other words if it is castable to a np.ndarray should be fine
+        # - especially ragged nesting ([0,[3],2]) and nesting of Iterables of differing lengths ([[0,1],[2,3,4]]) is not possible
         error = opath.verify(key, path_type="single_component")
         if error:
             raise KeyError(f"Keys must conform to following form: {error}")
@@ -341,11 +367,12 @@ class Writer(Reader):
                 # recursion
                 node[nn] = vv
         elif isinstance(value, np.ndarray):
-             self.file.create_array(self.opath, key, obj=value)
+            self.file.create_array(self.opath, key, obj=value)
         elif isinstance(value, List) or isinstance(value, Tuple):
-            # nested lists or tuples are interpreted as array of specific shape
-            # for ragged nesting [0,1,[2],3] -> raises TypeError
-            self.file.create_array(self.opath, key, obj=np.asarray(value))
+            # wrap in np.ndarray to fail early in case of improper nesting as well as dealing with string decoding in Reader
+            #   (hdf reads strings in bytes - not as python str objects - unicode)
+            self.file.create_array(self.opath, key, obj=np.array(value))
+
         elif isinstance(value, str) or isinstance(value, np.string_):
             self.file.create_array(self.opath, key, obj=np.asarray([value]))
         else:

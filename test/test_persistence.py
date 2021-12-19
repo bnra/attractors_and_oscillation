@@ -129,6 +129,7 @@ class TestClassWriter(TestCase):
         
         file = tables.File(path, mode="r")
         nodes, leaves = get_nodes(file, "/")
+        
         self.assertTrue(np.all(leaves["a"] == np.array([0,1,2,3,4,5,6,7,8,9])))
         file.close()
         
@@ -141,7 +142,9 @@ class TestClassWriter(TestCase):
         file = tables.File(path, mode="r")
         _, leaves = get_nodes(file, "/")
         #raise ValueError(leaves["a"],leaves["a"].read())
+        
         self.assertTrue(np.all(leaves["a"].read().astype(dtype=str) == np.array([f"{i}" for i in range(10)])))
+    
         file.close()
     
     def test_when_assigning_str_should_persist(self):
@@ -155,7 +158,7 @@ class TestClassWriter(TestCase):
         file.close()
         
     
-    def test_when_assigning_nested_list_should_raise_value_error(self):
+    def test_when_assigning_raggedly_nested_list_should_raise_value_error(self):
         path = "file2.h5"
 
         with self.assertRaises(TypeError):
@@ -314,6 +317,25 @@ class TestClassReader(TestCase):
             x = r.__repr__()
 
         self.assertEqual(x, '{\n  "data": {\n    "run_x": {\n      "x": "array([0 1 2 3 4 5 6 7 8 9 ... 90 91 92 93 94 95 96 97 98 99]) (100,) dtype:int64"\n    }\n  }\n}')
+
+    def test_method_load_when_called_should_return_dictionary_containing_all_descendants_recursively(self):
+        path = "file_d.h5"
+        file = tables.File(path, mode="w")
+        file.create_group("/", "mydata")
+        file.create_group("/mydata", "run_x")
+        file.create_array("/mydata/run_x", "spikes", obj=np.array([1]))
+        file.close()
+
+
+        file = tables.File(path, mode="r")
+        r = Reader(file, "/")
+        should = {"mydata" : {"run_x" : {"spikes" : np.array([1])}}}
+        is_ = r.load()
+        file.close()
+
+        self.assertTrue(is_, should)
+
+
 
 
 class TestClassFileMap(TestCase):

@@ -8,7 +8,6 @@ import time
 from typing import Callable, Tuple, Dict, Any, List
 import sys
 
-from utils import TestEnv
 
 class TestCase(unittest.TestCase):
     """
@@ -198,6 +197,4 @@ class SpeedTester:
         self._statistics = statistics
 
         return statistics
-
-
 

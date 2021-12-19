@@ -135,7 +135,8 @@ def convert_and_clean_brian2_quantity(x: Quantity) -> Tuple[np.ndarray, str]:
     """
     # copies (np.asarray(x) is in-place)
     unit = get_brian2_base_unit(x)
-    return np.asarray(x).item(), str(unit)
+    x_base = np.asarray(x)
+    return (x_base.item(), str(unit)) if x_base.size == 1  else (x_base, str(unit))
 
 
 def get_brian2_unit(x: Quantity) -> Unit:
@@ -189,3 +190,18 @@ def format_duration_ns(t: int):
         else:
             break
     return "  ".join([f"{c} {l}" for c, l in comps][::-1])
+
+
+def unique_idx(x:np.ndarray)->Tuple[np.ndarray, List[np.ndarray]]:
+    """
+    compute unique values and all indices for each unique value (efficient)
+
+    :param x: 1D array-like object that holds all values
+    :return: unique values and indices for each unique value, where the ith set of indices contains all indices of the ith value
+    """
+    if len(x.shape) > 1:
+        raise ValueError("Only 1D np.ndarrays supported")
+    indices = np.argsort(x)
+    
+    vals,idx = np.unique(x[indices], return_index=True)
+    return vals, np.split(indices, idx)[1:]
