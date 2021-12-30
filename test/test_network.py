@@ -43,7 +43,7 @@ class TestNeuronPopulation(TestCase):
             connect = Connector(synapse_type="static")
             syn_pp = connect(G, G, G.ids, G.ids, connect=("bernoulli", {"p":0.3}), on_pre='v += 0.1')
             exp.run(5*ms)
-            self.assertTrue("spike" in G.monitored and list(G.monitored["spike"]["spike_train"].keys()) == [str(e) for e in range(4)])
+            self.assertTrue("spike" in G.monitored and list(G.monitored["spike"]["spike_train"]["value"].keys()) == [str(e) for e in range(4)])
 
     def test_monitor_rate_when_experiment_run_should_monitor_population_rate(self):
         with BrianExperiment(persist=True, path="file.h5") as exp:
@@ -52,7 +52,7 @@ class TestNeuronPopulation(TestCase):
             connect = Connector(synapse_type="static")
             syn_pp = connect(G, G, G.ids, G.ids, connect=("bernoulli", {"p":0.3}), on_pre='v += 0.1')
             exp.run(5*ms)
-            self.assertTrue("rate" in G.monitored and G.monitored["rate"]["rate"].shape[0] == int(5*ms / exp.dt) + 1)
+            self.assertTrue("rate" in G.monitored and G.monitored["rate"]["rate"]["value"].shape[0] == int(5*ms / exp.dt) + 1)
 
     def test_monitor_when_experiment_run_should_monitor_variables_tb_monitored(self):
         with BrianExperiment(persist=True, path="file.h5") as exp:
@@ -72,7 +72,7 @@ class TestNeuronPopulation(TestCase):
             G = NeuronPopulation(4, 'dv/dt=(1-v)/(10*ms):1', threshold = 'v > 0.6', reset = "v=0", method = "rk4")
             G.monitor_spike(G.ids)
             exp.run(5 * ms)
-            self.assertTrue("spike" in G.monitored and G.monitored["spike"] == {'spike_train' : {}, 'meta' : {'spike_train' : 's' } })
+            self.assertTrue("spike" in G.monitored and G.monitored["spike"] == {"spike_train" : { "value" : {}, "unit" : "s" }})
             
 
     def test_monitored_when_experiment_run_with_monitor_rate_registered_and_no_spikes_occur_should_add_appropriate_key_to_monitored(self):
@@ -88,8 +88,8 @@ class TestNeuronPopulation(TestCase):
             #     if not np.allclose(i,j):
             #         diff.append((n,i,j))
             
-            self.assertTrue("rate" in G.monitored and np.allclose(G.monitored["rate"]["t"], np.arange(0.0,dur,dt, dtype=np.float64)), 
-                np.allclose(G.monitored["rate"]["rate"], np.zeros(int(dur) * int(1/dt))))
+            self.assertTrue("rate" in G.monitored and np.allclose(G.monitored["rate"]["t"]["value"], np.arange(0.0,dur,dt, dtype=np.float64) / 1000), 
+                np.allclose(G.monitored["rate"]["rate"]["value"], np.zeros(int(dur) * int(1/dt))))
 
 
 
@@ -175,7 +175,7 @@ class TestPoissonDeviceGroup(TestCase):
             P = PoissonDeviceGroup(1, rate=1 * kHz)
             P.monitor_spike(P.ids)
             exp.run(500 * ms)
-            self.assertTrue((abs(len(P.monitored["spike"]["spike_train"]["0"]) - 500) / 500) < 0.1)
+            self.assertTrue((abs(len(P.monitored["spike"]["spike_train"]["value"]["0"]) - 500) / 500) < 0.1)
 
 
         
@@ -195,7 +195,7 @@ class TestPoissonDeviceGroup(TestCase):
 
             should = offset * kHz * time_elapsed
             #raise ValueError(should, len(P.monitored["spike"]["spike_train"]["0"]))
-            self.assertTrue((abs(len(P.monitored["spike"]["spike_train"]["0"]) - should) / should) < 0.1)
+            self.assertTrue((abs(len(P.monitored["spike"]["spike_train"]["value"]["0"]) - should) / should) < 0.1)
 
 
 class TestConnector(TestCase):

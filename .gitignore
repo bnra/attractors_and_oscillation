@@ -1,2 +1,8 @@
 **/__pycache__
 *.pyc
+.tmp
+.tmp_test
+docs
+data
+test/test_summary
+

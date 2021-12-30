@@ -370,10 +370,11 @@ class BrianExperiment:
         # note technically we are testing whether method name defined by class and file path is same as file where class is defined
         #      so defining a function with same name as method of class within same file would
         #      break this (counted as class method and therefore ignored)
+
         return retrieve_callers_frame(
             lambda fi: not (
                 fi.function in dir(self.__class__)
-                and fi.filename == os.path.abspath(__file__)
+                and os.path.abspath(fi.filename) == os.path.abspath(__file__)
             )
         )
 
@@ -469,8 +470,10 @@ class BrianExperiment:
 
         self._timing.finalize()
 
-        tt, unit = clean_brian2_quantity(t)
-        self._meta["simulation_time"] = {"t": np.array(tt), "unit": unit}
+        tt, unit = convert_and_clean_brian2_quantity(t)
+        dt, unit_dt = convert_and_clean_brian2_quantity(self.dt)
+        self._meta["t"] = {"value": np.array(tt), "unit": unit}
+        self._meta["dt"] = {"value": np.array(dt), "unit": unit_dt}
 
     def __enter__(self):
 
@@ -579,7 +582,7 @@ class BrianExperiment:
 
                 # persist timing
                 if self._timing:
-                    fm["meta"]["timing_ns"] = {
+                    fm["meta"]["run_times_in_ns"] = {
                         k: np.array(v) for k, v in self._timing.timings.items()
                     }
 

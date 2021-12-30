@@ -157,6 +157,19 @@ class Reader:
             for k in set(list(nodes.keys()) + list(leaves.keys()))
         ]
 
+    def values(self):
+        """
+        Note that this will extract all values of terminal nodes (arrays)
+        into memory at the current level
+
+        This is not memory efficient! Avoid!
+        """
+        nodes, leaves = get_nodes(self.file, self.opath)
+        return [
+            self._extract_value(k, nodes, leaves)
+            for k in set(list(nodes.keys()) + list(leaves.keys()))
+        ]
+
     def load(self):
         """
         convert instance of this class to a dictionary - fully loads all descendants recursively

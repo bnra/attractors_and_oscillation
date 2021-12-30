@@ -3,7 +3,7 @@ import numpy as np
 import os
 
 from test.utils import TestCase
-from utils import clean_brian2_quantity, get_brian2_base_unit, get_brian2_unit, unique_idx, validate_file_path, generate_sequential_file_name
+from utils import clean_brian2_quantity, get_brian2_base_unit, get_brian2_unit, unique_idx, validate_file_path, generate_sequential_file_name, values_in_interval, round_to_res, restrict_to_interval
 
 
 class TestFctValidateFilePath(TestCase):
@@ -125,3 +125,104 @@ class TestFctUniqueIdx(TestCase):
         with self.assertRaises(ValueError):
             unique_idx(np.arange(100).reshape(10,10))
     
+
+
+
+
+
+
+class TestFctValuesInInterval(TestCase):
+    def test_when_duration_divided_by_time_step_has_no_remainder_should_return_correct_number_of_values(self):
+        t0 = 1.0
+        t1 = 11.0
+        dt = 0.1
+        self.assertTrue(values_in_interval(t0, t1, dt), np.arange(t0,t1,dt).size)
+    def test_when_duration_divided_by_time_step_has_remainder_should_return_correct_number_of_values(self):
+        t0 = 1.0
+        t1 = 11.0
+        dt = 0.3
+        self.assertTrue(values_in_interval(t0, t1, dt), np.arange(t0,t1,dt).size)
+
+
+
+class TestFctRoundToRes(TestCase):
+    # check what python3 floats are mapped to internally with sys.float_info 
+    # - for 64 bit precision (1 s + 11 e + 52 f) the tests cases will lead to under/overflow
+    def test_when_underflow_occurs_should_round_to_res(self):
+        n = 1781273
+        res = 1e-06
+        #test underflow
+        # assert res * n != 1.781273
+        self.assertTrue(round_to_res(res*n,res), 1.781273)
+
+    def test_when_overflow_occurs_should_round_to_res(self):
+        n = 1781273
+        res = 1e-05
+        # test overflow
+        # assert res * n != 17.81273
+        self.assertEqual(round_to_res(res*n,res), 17.81273)
+
+
+class TestFunctionRestrictToInterval(TestCase):
+            
+    def test_when_open_ended_should_return_ending_with_last_index(self):
+        dt = 0.01
+        t = 100.0
+
+        x = np.arange(0.0, t, dt)
+
+        xr, t_start, t_end = restrict_to_interval(x, dt,t_start=3.0)
+
+        self.assertTrue(np.allclose(xr, np.arange(3.0,t, dt)))
+        self.assertEqual(t_start, 3.0)
+        self.assertEqual(t_end, 99.99)
+    
+    def test_when_open_start_should_return_starting_with_first_index(self):
+        dt = 0.01
+        t = 100.0
+
+        x = np.arange(0.0, t, dt)
+
+        xr, t_start, t_end = restrict_to_interval(x, dt,t_end=98.0)
+
+        self.assertTrue(np.allclose(xr, np.arange(0.0, 98.0+dt, dt)))
+        self.assertEqual(t_start, 0.0)
+        self.assertEqual(t_end, 98.0)
+
+    def test_when_no_interval_should_return_entire_array(self):
+        dt = 0.01
+        t = 100.0
+
+        x = np.arange(0.0, t, dt)
+
+        xr, t_start, t_end = restrict_to_interval(x, dt)
+
+        self.assertTrue(np.allclose(xr, np.arange(0.0, t, dt)))
+        self.assertEqual(t_start, 0.0)
+        self.assertEqual(t_end, 99.99)
+    
+    def test_when_bounded_from_two_sides_should_return_only_values_within_bounds(self):
+        dt = 0.01
+        t = 100.0
+
+        x = np.arange(0.0, t, dt)
+
+        xr, t_start, t_end = restrict_to_interval(x, dt,t_start=3.0, t_end=98.0)
+
+        self.assertTrue(np.allclose(xr, np.arange(3.0, 98.0+dt, dt)))
+        self.assertEqual(t_start, 3.0)
+        self.assertEqual(t_end, 98.0)
+
+
+    def test_when_upper_bound_exceeds_simulation_time_should_return_only_values_until_the_end_and_the_final_simulation_time(self):
+        dt = 0.01
+        t = 100.0
+
+        x = np.arange(0.0, t, dt)
+
+        xr, t_start, t_end = restrict_to_interval(x, dt, t_end=100.01)
+
+        self.assertTrue(np.allclose(xr, x))
+        self.assertEqual(t_start, 0.0)
+        self.assertEqual(t_end, 99.99)
+

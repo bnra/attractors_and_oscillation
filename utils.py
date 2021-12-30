@@ -96,7 +96,9 @@ def retrieve_callers_frame(condition: Callable[[inspect.FrameInfo], bool]):
     # find first caller in call stack (excepting top most frame ~ call to this fct)fullfilling condition of the parameter condition
 
     # top most stack frame represents call to this function
+
     for frame_info in inspect.stack()[1:]:
+        # print(frame_info)
         if condition(frame_info):
             return frame_info
     raise Exception(f"No frame satisfying condition { condition } found.")
@@ -136,7 +138,7 @@ def convert_and_clean_brian2_quantity(x: Quantity) -> Tuple[np.ndarray, str]:
     # copies (np.asarray(x) is in-place)
     unit = get_brian2_base_unit(x)
     x_base = np.asarray(x)
-    return (x_base.item(), str(unit)) if x_base.size == 1  else (x_base, str(unit))
+    return (x_base.item(), str(unit)) if x_base.size == 1 else (x_base, str(unit))
 
 
 def get_brian2_unit(x: Quantity) -> Unit:
@@ -192,7 +194,7 @@ def format_duration_ns(t: int):
     return "  ".join([f"{c} {l}" for c, l in comps][::-1])
 
 
-def unique_idx(x:np.ndarray)->Tuple[np.ndarray, List[np.ndarray]]:
+def unique_idx(x: np.ndarray) -> Tuple[np.ndarray, List[np.ndarray]]:
     """
     compute unique values and all indices for each unique value (efficient)
 
@@ -202,6 +204,105 @@ def unique_idx(x:np.ndarray)->Tuple[np.ndarray, List[np.ndarray]]:
     if len(x.shape) > 1:
         raise ValueError("Only 1D np.ndarrays supported")
     indices = np.argsort(x)
-    
-    vals,idx = np.unique(x[indices], return_index=True)
+
+    vals, idx = np.unique(x[indices], return_index=True)
     return vals, np.split(indices, idx)[1:]
+
+
+def values_in_interval(t0: float, t1: float, dt: float):
+    """
+    compute the number of values in the interval [t0,t1)
+
+    :param t0: start of interval (incl.)
+    :param t1: end of interval (excl.)
+    :param dt: step size of a step
+    :return: number of values (= number of steps + 1) in interval from t1 to t0 given step size dt
+    """
+    return int(np.ceil((t1 - t0) / dt))
+
+
+def next_power_of_two(x: int):
+    """
+    next power of two implemented using bit length of integer
+    (equivalent to ceil(log2(x)), ie smallest sp such that x <= 2 ** sp)
+
+    :param x: value for which the next largest power of 2 is tb determined
+    :return: smallest power of two greater equal to x (smallest sp such that  x <= 2 ** sp)
+    """
+    # shifting x to the left by 1 for bits results in bit(e) = x = sp(e) (incl shift for bit(.)),
+    #  ie bit'(x-1) = sp'(x) where bit', sp' are the respective inverse fct
+    # bit -> x :             1 -> (0,1), 2 -> (2,3), 3 -> (4,5,6,7), 4 -> (8, ..., 15)
+    # sp  -> x : 0 -> (0,1), 1 -> (2),   2 -> (3,4), 3 -> (5,6,7,8)
+    return int(x - 1).bit_length()
+
+
+def round_to_res(x: float, res: float):
+    """
+    round to a resolution of the most significant digit of parameter res
+    (rounded to the number of decimals at which res has the first nz value, eg. 0.001 -> 3 decimals)
+
+    :param x: number tb rounded
+    :param res: most significant bit of this resolution specifies the resolution of rounding
+    :return: number rounded to a resolution of the most significant digit of param res
+    """
+    if res <= 0.0 or res > 1.0:
+        raise ValueError(f"Param res must be in (0,1]. Is {res}")
+    return round(x, -int(np.log10(abs(res))))
+
+
+def compute_time_interval(
+    t: float, dt: float, t_start: float = None, t_end: float = None
+):
+    """
+    compute a time interval [t_start, t_end] (closed bounds)
+    given the optional specifications (t_start, t_end) and verify its validity
+
+
+    :param t: simulation time [ms]
+    :param dt: simulation time step [ms]
+    :param t_start: time lower bound
+    :param t_end: time upper bound
+    :return: bounds of the interval, last time point
+    """
+    last_idx = values_in_interval(0.0, t, dt) - 1
+    t_last = round_to_res(last_idx * dt, dt)
+    t_end = t_end if t_end != None and t_end <= t_last else t_last
+    t_start = t_start if t_start != None else 0.0
+
+    if t_start >= t_end:
+        raise ValueError(
+            f"t_start cannot be >= t_end. Are: t_start {t_start} and t_end {t_end}."
+        )
+    return t_start, t_end, t_last
+
+
+def restrict_to_interval(
+    x: np.ndarray, dt: float, t_start: float = None, t_end: float = None
+) -> Tuple[np.ndarray, float, float]:
+    """
+    restrict data to interval [t_start, t_end] given data is sampled at equidistant intervals of dt
+
+    :param x: data tb restricted to interval
+    :param dt: time step at which data is sampled
+    :param t_start: incl. lower bound (time [ms]) for the restriction interval
+    :param t_end: incl. upper bound (time [ms]) for the restriction interval
+                    - if t_end > simulation time ~ t_end=None
+    :return: data in interval [t_start, t_end], t_start, t_end
+    """
+    if t_end == None:
+        idx_end = x.shape[0] - 1
+    else:
+        idx_end = int(t_end / dt)
+        if idx_end >= x.shape[0]:
+            idx_end = x.shape[0] - 1
+
+    if t_start == None:
+        idx_start = 0
+    else:
+        idx_start = int(t_start / dt)
+
+    return (
+        x[idx_start : idx_end + 1],
+        round_to_res(idx_start * dt, dt),
+        round_to_res(idx_end * dt, dt),
+    )

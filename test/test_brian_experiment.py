@@ -1,4 +1,3 @@
-from posixpath import abspath
 import numpy as np
 import os
 from brian2 import ms, defaultclock
@@ -134,7 +133,7 @@ class TestClassBrianExperiment(TestCase):
             #raise ValueError(f'fm:{fm[NeuronPopulation.__name__]["E"]["state"]["t"] * ms}, mon:{available_data["state"]["t"]}')
             #raise ValueError(f"{fm}")
             self.assertTrue(np.all(fm[SpikeDeviceGroup.__name__]["E"]["state"]["v"] == available_data["state"]["v"]))
-            self.assertTrue(np.all(fm[SpikeDeviceGroup.__name__]["E"]["state"]["t"] == np.array(available_data["state"]["t"])))
+            self.assertTrue(np.all(fm[SpikeDeviceGroup.__name__]["E"]["state"]["t"]["value"] == np.array(available_data["state"]["t"]["value"])))
 
 
     def test_when_persist_set_should_auto_save_instances_of_synapse(self):

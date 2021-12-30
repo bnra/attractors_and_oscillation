@@ -14,7 +14,6 @@ from abc import ABCMeta, abstractproperty
 from differential_equations.neuron_equations import eqs_P, eqs_I
 from utils import (
     Brian2UnitError,
-    clean_brian2_quantity,
     get_brian2_base_unit,
     convert_and_clean_brian2_quantity,
     retrieve_callers_context,
@@ -59,28 +58,31 @@ class SpikeDeviceGroup(metaclass=ABCMeta):
             ids, indices = unique_idx(idx)
             vals, unit = convert_and_clean_brian2_quantity(vals)
 
-            data["spike"] = {}
+            data["spike"] = {"spike_train": {}}
 
-            data["spike"]["spike_train"] = {
+            data["spike"]["spike_train"]["value"] = {
                 str(i): np.sort(vals[idx]) for i, idx in zip(ids, indices)
             }
 
-            data["spike"]["meta"] = {"spike_train": str(unit)}
+            data["spike"]["spike_train"]["unit"] = str(unit)
 
         if self._rate != None:
-            data["rate"] = {"meta": {}}
+            data["rate"] = {}
 
-            rec_clean, unit_str = clean_brian2_quantity(
+            rec_clean, unit_str = convert_and_clean_brian2_quantity(
                 self._rate.t.variable.get_value_with_unit()
             )
-            data["rate"]["t"] = rec_clean
-            data["rate"]["meta"]["t"] = unit_str
+            data["rate"]["t"] = {"value": rec_clean, "unit": unit_str}
 
-            rec_clean, unit_str = clean_brian2_quantity(
+            rec_clean, unit_str = convert_and_clean_brian2_quantity(
                 self._rate.rate.variable.get_value_with_unit()
             )
-            data["rate"]["rate"] = rec_clean
-            data["rate"]["meta"]["rate"] = unit_str
+            data["rate"]["rate"] = {"value": rec_clean, "unit": unit_str}
+
+            rec_clean, unit_str = convert_and_clean_brian2_quantity(
+                self._rate.smooth_rate(window="gaussian", width=1 * ms)
+            )
+            data["rate"]["smoothed"] = {"value": rec_clean, "unit": unit_str}
 
         return data
 
@@ -129,6 +131,8 @@ class PoissonDeviceGroup(SpikeDeviceGroup):
     @property
     def ids(self):
         """
+        ids are unique to a device group and chosen tb equal to the index of a device within the device group - therefore ids start at 0 and are contiguous
+        (an index is valid for a given group if index in [0, group.size - 1])
         :return: poisson device ids of the instance of :class:`PoissonDeviceGroup` unique to the instance only! (same as :class:`brian2.PoissonGroup`)
         """
         return [*self._pop.i]
@@ -269,6 +273,8 @@ class NeuronPopulation(SpikeDeviceGroup):
     @property
     def ids(self):
         """
+        ids are unique to a neuron population and chosen tb equal to the index of a neuron within the population - therefore ids start at 0 and are contiguous
+        (an index is valid for a given population if index in [0, pop.size - 1])
         :return: neuron ids of the instance of :class:`NeuronPopulation` unique to the instance only! (same as :class:`brian2.NeuronGroup`)
         """
         return [*self._pop.i]
@@ -283,19 +289,17 @@ class NeuronPopulation(SpikeDeviceGroup):
         data["device"]["eqs"] = self._eqs
 
         if hasattr(self._mon, "recorded_variables"):
-            data["state"] = {"meta": {}}
-            rec_clean, unit_str = clean_brian2_quantity(
+            data["state"] = {}
+            rec_clean, unit_str = convert_and_clean_brian2_quantity(
                 self._mon.t.variable.get_value_with_unit()
             )
-            data["state"]["t"] = rec_clean
-            data["state"]["meta"]["t"] = unit_str
+            data["state"]["t"] = {"value": rec_clean, "unit": unit_str}
 
             for k in [*self._mon.recorded_variables.keys()]:
                 recs = getattr(self._mon, k)
                 if isinstance(recs, Quantity):
-                    rec_clean, unit_str = clean_brian2_quantity(recs)
-                    data["state"][k] = rec_clean
-                    data["state"]["meta"][k] = unit_str
+                    rec_clean, unit_str = convert_and_clean_brian2_quantity(recs)
+                    data["state"][k] = {"value": rec_clean, "unit": unit_str}
                 else:
                     data["state"][k] = recs
 
@@ -398,7 +402,14 @@ class Synapse:
         return (
             {
                 "state": {
-                    k: getattr(self._mon, k)
+                    k: dict(
+                        zip(
+                            ("value", "unit"),
+                            convert_and_clean_brian2_quantity(getattr(self._mon, k)),
+                        )
+                    )
+                    if isinstance(getattr(self._mon, k), Quantity)
+                    else getattr(self._mon, k)
                     for k in [*self._mon.recorded_variables.keys(), "t"]
                 }
             }
