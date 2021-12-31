@@ -50,48 +50,48 @@ colors = {
 def plot_spike_train(
     fig: matplotlib.figure.Figure,
     ax: matplotlib.axes.Axes,
-    spike_train_e: Dict[str, np.ndarray],
-    spike_train_i: Dict[str, np.ndarray],
-    color_e: str,
-    color_i: str,
+    pop_name: List[str],
+    train: Dict[str, np.ndarray],
+    size: Dict[str, int],
+    color: Dict[str, str] = {},
 ):
     """
-    id to spike train plot for excitatory and inhibitory population
+    id to spike train plot for neuron populations
 
     :param fig: figure instance
     :param ax: axis instance
-    :param spike_train_e: spike train of the excitatory population for individual neurons
-    :param spike_train_i: spike train of the inhibitory population for individual neurons
-    :param color_e: color of excitatory population
-    :param color_i: color of inhibitory population
+    :param pop_name: populations tb plotted in order
+    :param train: spike train by neuron population
+    :param size: popullation size by neuron population
+    :param color: color by neuron population (opt.)
     """
-    ids, spikes = list(zip(*sorted(spike_train_e.items(), key=lambda x: int(x[0]))))
-    points_e = []
-    for i, spike in zip(ids, spikes):
-        points_e.append(
-            ax.scatter(
-                spike,
-                np.ones(spike.size) * int(i),
-                color=color_e,
-                marker=".",
-                s=(72.0 / fig.dpi) ** 2,
-                label="E",
-            )
+    if not all([pn in train.keys() and pn in size.keys() for pn in pop_name]):
+        raise ValueError(
+            f"For some of the populations in pop_names no spike trainis provided. Is {pop_name}."
         )
 
-    ids_i, spikes_i = list(zip(*sorted(spike_train_i.items(), key=lambda x: int(x[0]))))
-    points_i = []
-    for i, spike in zip(ids_i, spikes_i):
-        points_i.append(
-            ax.scatter(
-                spike,
-                np.ones(spike.size) * (int(i) + int(ids[-1])),
-                color=color_i,
-                marker=".",
-                s=(72.0 / fig.dpi) ** 2,
-                label="I",
+    points = {}
+    offset = 0
+    for pn in pop_name:
+        ids, spikes = list(zip(*sorted(train[pn].items(), key=lambda x: int(x[0]))))
+        points[pn] = []
+        for i, spike in zip(ids, spikes):
+            points[pn].append(
+                ax.scatter(
+                    spike,
+                    np.ones(spike.size) * (int(i) + offset),
+                    color=color[pn] if pn in color.keys() else None,
+                    marker=".",
+                    s=(72.0 / fig.dpi) ** 2,
+                    label=pn,
+                )
             )
-        )
+
+        offset += size[pn]
+
+    ax.set_xlabel("time [ms]")
+    ax.set_ylabel("ids")
+    ax.legend(*[*zip(*[(tuple(points[pn]), pn) for pn in pop_name])])
 
     # significantly faster than creating a legend for large datasets
     # data points in yrange 10-90%: 1:4 split: 80/5 = 16 -> [10, 73], [74, 90] -> mid points 42, mid points 82
@@ -102,21 +102,15 @@ def plot_spike_train(
     #    "I", (0.985, 0.82), xycoords="axes fraction", color=colors["I"], weight="bold"
     # )
 
-    ax.set_xlabel("time [ms]")
-    ax.set_ylabel("ids")
-    ax.legend([tuple(points_e), tuple(points_i)], ["E", "I"])
-
 
 def plot_voltages(
     fig: matplotlib.figure.Figure,
     ax: matplotlib.axes.Axes,
     times,
-    ids_e,
-    ids_i,
-    voltages_e,
-    voltages_i,
-    color_it_e: Iterator,
-    color_it_i: Iterator,
+    pop_name: List[str],
+    ids: Dict[str, List[int]],
+    voltages: Dict[str, np.ndarray],
+    color: Dict[str, Iterator],
 ):
     """
     plot of voltages of excitatory and inhibitory population
@@ -124,25 +118,23 @@ def plot_voltages(
     :param fig: figure instance
     :param ax: axis instance
     :param times: time points
-    :param ids_e: ids of neurons in excitatory population which are tb plotted
-    :param ids_i: ids of neurons in inhibitory population which are tb plotted
-    :param voltages_e: voltages of excitatory population
-    :param voltages_i: voltages of inhibitory population
-    :param color_it_e: iterator over colors for excitatory population
-    :param color_it_i: iterator over colors for inhibitory population
+    :param pop_name: names of populations tb plotted in order
+    :param ids_e: ids of neurons by population
+    :param voltages: voltages by neuron id and population
+    :param color: iterator over colors by population
     """
-    # dont use res here if anything use sth that ensures the peaks are not lost
 
-    for i, id_ in enumerate(ids_e):
-        v = voltages_e[i]
+    for pn in pop_name:
+        for i, id_ in enumerate(ids[pn]):
+            v = voltages[pn][i]
 
-        ax.plot(times, v, label=f"E: {id_}", color=next(color_it_e))
-        # ax.set_ylabel("potential [mV]")
+            ax.plot(
+                times,
+                v,
+                label=f"{pn}: {id_}",
+                color=next(color[pn]) if pn in color.keys() else None,
+            )
 
-    for i, id_ in enumerate(ids_i):
-        v = voltages_i[i]
-        ax.plot(times, v, label=f"I: {id_}", color=next(color_it_i))
-        # ax.set_ylabel("potential [mV]")
     ax.set_ylabel("potential [mV]")
     ax.set_xlabel("time [ms]")
     ax.legend()
@@ -324,6 +316,8 @@ class ExperimentPlotter:
 
     def __init__(
         self,
+        pop_name_e: str,
+        pop_name_i: str,
         data: Union[Dict, persistence.Reader] = None,
         analysis: Union[Dict, persistence.Reader] = None,
         layout: str = "vertical",
@@ -339,6 +333,9 @@ class ExperimentPlotter:
             raise ValueError(
                 f"param layout must be in [vertical, horizontal, quadratic]. Is {layout} "
             )
+
+        self.pop_name_e = pop_name_e
+        self.pop_name_i = pop_name_i
 
         self.data = data
         self.analysis = analysis
@@ -402,113 +399,124 @@ class ExperimentPlotter:
     def show(self):
         plt.show()
 
-    def plot_spike_train(self, pop_name_e: str, pop_name_i: str):
+    def plot_spike_train(self, pop_name: List[str] = None, color: Dict[str, str] = {}):
         """
-        plot spike train of E and I population
+        plot spike train of populations
 
+        :param pop_name: population names of populations tb plotted
+        :param color: color by population names
         """
-        if not all(
-            [
-                pn in self.data["SpikeDeviceGroup"].keys()
-                for pn in [pop_name_e, pop_name_i]
-            ]
-        ):
+        pop_name = [self.pop_name_e, self.pop_name_i] if pop_name == None else pop_name
+        if not all([pn in self.data["SpikeDeviceGroup"].keys() for pn in pop_name]):
             raise ValueError(
-                f"Population names {pop_name_e} and {pop_name_i} not in data['SpikeDeviceGroup'] (parameter provided during __init__)."
+                f"Population names {pop_name} not in data['SpikeDeviceGroup'] (parameter provided during __init__)."
             )
         # add plot function
         train = {}
-        for pop_name in [pop_name_e, pop_name_i]:
-            train[pop_name] = {}
-            for i, ts in self.data["SpikeDeviceGroup"][pop_name]["spike"][
-                "spike_train"
-            ]["value"].items():
+        size = {}
+        for pn in pop_name:
+            train[pn] = {}
+            for i, ts in self.data["SpikeDeviceGroup"][pn]["spike"]["spike_train"][
+                "value"
+            ].items():
                 ts = ts * 1000
 
                 if self.t_start == 0.0 and self.t_end == self.t_last:
-                    train[pop_name][i] = ts
+                    train[pn][i] = ts
                 else:
-                    train[pop_name][i] = ts[
+                    train[pn][i] = ts[
                         np.logical_and(ts >= self.t_start, ts <= self.t_end)
                     ]
+            size[pn] = self.data["SpikeDeviceGroup"][pn]["ids"].size
+
+        if self.pop_name_e in pop_name and self.pop_name_e not in color.keys():
+            color[self.pop_name_e] = colors["E"]
+        if self.pop_name_i in pop_name and self.pop_name_i not in color.keys():
+            color[self.pop_name_i] = colors["I"]
 
         self.plots.append(
             lambda fig, ax: plot_spike_train(
-                fig,
-                ax,
-                train[pop_name_e],
-                train[pop_name_i],
-                color_e=colors["E"],
-                color_i=colors["I"],
+                fig, ax, pop_name=pop_name, train=train, size=size, color=color
             )
         )
 
-    def plot_voltages(self, pop_name_e: str, pop_name_i: str, ids_e=[0], ids_i=[0]):
-
+    def plot_voltages(
+        self,
+        pop_name: List[str] = [],
+        ids: Dict[str, List[int]] = {},
+        color: Dict[str, str] = {},
+    ):
+        pop_name = [self.pop_name_e, self.pop_name_i] if pop_name == [] else pop_name
+        ids = {pn: [0] for pn in pop_name} if ids == {} else ids
         if not all(
             [
-                pn in self.data["SpikeDeviceGroup"].keys()
-                for pn in [pop_name_e, pop_name_i]
+                pn in self.data["SpikeDeviceGroup"].keys() and pn in ids.keys()
+                for pn in pop_name
             ]
         ):
             raise ValueError(
-                f"Population names {pop_name_e} and {pop_name_i} not in data['SpikeDeviceGroup'] (parameter provided during __init__)."
+                f"Population names {pop_name} not in data['SpikeDeviceGroup'] (parameter provided during __init__) or not in parameter ids."
             )
+        data = self.data["SpikeDeviceGroup"]
 
-        data_e = self.data["SpikeDeviceGroup"][pop_name_e]
-        data_i = self.data["SpikeDeviceGroup"][pop_name_i]
-
-        if not all(
-            [i < len(data_e["ids"]) for i in ids_e]
-            + [i < len(data_i["ids"]) for i in ids_i]
-        ):
-            raise ValueError(
-                "some ids in ids_e or/and ids_i not contained in data dictionary/Reader passed at initialization"
+        for pn in pop_name:
+            if not all(
+                [i < len(data[pn]["ids"]) for i in ids[pn]]
+                + [i < len(data[pn]["ids"]) for i in ids[pn]]
+            ):
+                raise ValueError(
+                    f"for population {pn}: some ids in ids_e or/and ids_i not contained in data dictionary/Reader passed at initialization"
+                )
+        voltages = {}
+        for pn in pop_name:
+            # given in voltage V -> mV
+            v_var = "v_s" if pn == self.pop_name_e else "v"
+            vol, _, _ = restrict_to_interval(
+                (data[pn]["state"][v_var]["value"][ids[pn]] * 1000).T,
+                self.dt,
+                self.t_start,
+                self.t_end,
             )
-
-        # given in voltage V -> mV
-        vol_e, _, _ = restrict_to_interval(
-            (data_e["state"]["v_s"]["value"][ids_e] * 1000).T,
-            self.dt,
-            self.t_start,
-            self.t_end,
-        )
-        voltages_e = vol_e.T
-
-        vol_i, _, _ = restrict_to_interval(
-            (data_i["state"]["v"]["value"][ids_i] * 1000).T,
-            self.dt,
-            self.t_start,
-            self.t_end,
-        )
-        voltages_i = vol_i.T
+            voltages[pn] = vol.T
 
         # given in seconds s -> ms
         time, _, _ = restrict_to_interval(
-            data_e["state"]["t"]["value"] * 1000, self.dt, self.t_start, self.t_end
+            data[pop_name[0]]["state"]["t"]["value"] * 1000,
+            self.dt,
+            self.t_start,
+            self.t_end,
         )
+
+        color_it = {}
+        if self.pop_name_e in pop_name and self.pop_name_e not in color.keys():
+            color_it[self.pop_name_e] = color_its["E"](voltages[pn].size)
+        if self.pop_name_i in pop_name and self.pop_name_i not in color.keys():
+            color_it[self.pop_name_i] = color_its["I"](voltages[pn].size)
+
+        for pop, c_base in color.items():
+            color_it[pop] = sequential_palette(c_base, voltages[pop].size)
 
         self.plots.append(
             lambda fig, ax: plot_voltages(
                 fig,
                 ax,
                 time,
-                ids_e,
-                ids_i,
-                voltages_e,
-                voltages_i,
-                color_it_e=color_its["E"](len(ids_e)),
-                color_it_i=color_its["I"](len(ids_i)),
+                pop_name,
+                ids,
+                voltages,
+                color=color_it,
             )
         )
 
-    def plot_instantaneous_rate(self, pop_name_e, pop_name_i):
+    def plot_instantaneous_rate(
+        self,
+        pop_name: List[str] = [],
+        color: Dict[str, str] = {},
+    ):
 
+        pop_name = [self.pop_name_e, self.pop_name_i] if pop_name == [] else pop_name
         if self.analysis == None or not all(
-            [
-                pn in self.analysis["SpikeDeviceGroup"].keys()
-                for pn in [pop_name_e, pop_name_i]
-            ]
+            [pn in self.analysis["SpikeDeviceGroup"].keys() for pn in pop_name]
         ):
             raise Exception(
                 "No analysis object passed for instantiation (__init__) or pop_name_e or pop_name_i not in provided data"
@@ -517,18 +525,19 @@ class ExperimentPlotter:
         # note here dt == self.dt as inst rate at sim time step resolution
         dt = self.data["meta"]["dt"]["value"] * 1000
 
+        data = self.analysis["SpikeDeviceGroup"]
         inst_rate = {
-            pop_name: (
+            pn: (
                 restrict_to_interval(
-                    data["instantaneous_rate"]["value"],
+                    data[pn]["instantaneous_rate"]["value"],
                     dt,
                     self.t_start_al,
                     self.t_end_al,
                 )[0],
-                data["instantaneous_rate"]["unit"],
+                data[pn]["instantaneous_rate"]["unit"],
             )
-            for pop_name, data in self.analysis["SpikeDeviceGroup"].items()
-            if "instantaneous_rate" in data.keys()
+            for pn in pop_name
+            if "instantaneous_rate" in data[pn].keys()
         }
         time = np.arange(
             self.analysis["meta"]["t_start"]["value"] * 1000,
@@ -538,21 +547,26 @@ class ExperimentPlotter:
 
         time, _, _ = restrict_to_interval(time, dt, self.t_start_al, self.t_end_al)
 
+        if self.pop_name_e in pop_name and self.pop_name_e not in color.keys():
+            color[self.pop_name_e] = colors["E"]
+        if self.pop_name_i in pop_name and self.pop_name_i not in color.keys():
+            color[self.pop_name_i] = colors["I"]
+
         self.plots.append(
             lambda fig, ax: plot_instantaneous_rate(
                 fig,
                 ax,
                 time,
                 inst_rate,
-                color={pop_name_e: colors["E"], pop_name_i: colors["I"]},
+                color=color,
             )
         )
 
-    def plot_smoothed_rate(self, pop_name_e=None, pop_name_i=None):
+    def plot_smoothed_rate(self, pop_name: List[str] = [], color: Dict[str, str] = {}):
 
-        pop_names = [pn for pn in [pop_name_e, pop_name_i] if pn != None]
+        pop_name = [self.pop_name_e, self.pop_name_i] if pop_name == [] else pop_name
 
-        if len(pop_names) == 0:
+        if len(pop_name) == 0:
             raise ValueError(
                 "No population provided -please plot at least one population."
             )
@@ -561,7 +575,7 @@ class ExperimentPlotter:
             [
                 pn in self.analysis["SpikeDeviceGroup"].keys()
                 and "instantaneous_rate" in self.analysis["SpikeDeviceGroup"][pn].keys()
-                for pn in pop_names
+                for pn in pop_name
             ]
         ):
             raise Exception(
@@ -584,7 +598,7 @@ class ExperimentPlotter:
                 data["smoothed_rate"]["unit"],
             )
             for pn, data in self.analysis["SpikeDeviceGroup"].items()
-            if pn in pop_names
+            if pn in pop_name
         }
 
         time = np.arange(
@@ -595,13 +609,18 @@ class ExperimentPlotter:
 
         time, _, _ = restrict_to_interval(time, dt, self.t_start_al, self.t_end_al)
 
+        if self.pop_name_e in pop_name and self.pop_name_e not in color.keys():
+            color[self.pop_name_e] = colors["E"]
+        if self.pop_name_i in pop_name and self.pop_name_i not in color.keys():
+            color[self.pop_name_i] = colors["I"]
+
         self.plots.append(
             lambda fig, ax: plot_smoothed_rate(
                 fig,
                 ax,
                 time,
                 inst_rate,
-                color={pop_name_e: colors["E"], pop_name_i: colors["I"]},
+                color=color,
             )
         )
 
