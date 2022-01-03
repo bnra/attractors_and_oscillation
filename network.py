@@ -1,5 +1,5 @@
-from typing import Callable, List, Tuple, Dict, Union
-from brian2 import NeuronGroup, StateMonitor, ms, check_units
+from typing import Callable, List, Tuple, Dict, Union, Iterable
+from brian2 import NeuronGroup, StateMonitor, TimedArray, ms, check_units
 from brian2.input.poissongroup import PoissonGroup
 from brian2.monitors.ratemonitor import PopulationRateMonitor
 from brian2.monitors.spikemonitor import SpikeMonitor
@@ -9,7 +9,6 @@ from brian2.units.stdunits import Hz
 import numpy as np
 import os
 from abc import ABCMeta, abstractproperty
-
 
 from differential_equations.neuron_equations import eqs_P, eqs_I
 from utils import (
@@ -119,7 +118,8 @@ class PoissonDeviceGroup(SpikeDeviceGroup):
 
     def __init__(self, size: int, rate: Union[Quantity, Callable, str]):
 
-        self._rate_param = rate
+        self.rate_poisson = rate
+
         self._devices = PoissonGroup(size, rate)
 
         super().__init__()
@@ -140,7 +140,7 @@ class PoissonDeviceGroup(SpikeDeviceGroup):
     @property
     def monitored(self):
         data = super().monitored
-        data["device"]["rate"] = self._rate_param
+        data["device"]["rate"] = self.rate_poisson
         return data
 
     @staticmethod
@@ -162,6 +162,119 @@ class PoissonDeviceGroup(SpikeDeviceGroup):
         :return:  expression representing the time variant rate function, which specifies the rate in kHz per definition
         """
         return f"({offset} + cos((t - {time_shift/ms} * ms) * {angular_frequency/Hz} * Hz) * {amplitude}) * kHz"
+
+
+class PoissonBlockedStimulus(PoissonDeviceGroup):
+    @check_units(
+        size=1,
+        pattern=1,
+        block_interval=1,
+        one_rate=Hz,
+        zero_rate=Hz,
+        t=ms,
+        stimulus_dt=ms,
+    )
+    def __init__(
+        self,
+        size: int,
+        pattern: np.ndarray,
+        block_interval: Tuple[int, int],
+        one_rate: Quantity,
+        zero_rate: Quantity,
+        t: Quantity,
+        stimulus_dt: Quantity,
+    ):
+        """
+        :param size: size of the group ~ number of spike devices
+        :param pattern:  pattern (mask) across all spike devices in the group (shape: (size,) ) - used for setting rate for all indices in block_interval
+        :param block_interval: half-open interval ( [start,end) ) of indices of block tb set to rate
+        :param t: simulation time [ms]
+        :param stimulus_dt: time step of the stimulus ~ size of one block for which rate is held constant at stimulus_block[i]
+        """
+
+        stimulus = self.__class__.create_blocked_rate(
+            size, pattern, block_interval, one_rate, zero_rate, t, stimulus_dt
+        )
+        self.stimulus = stimulus
+
+        super().__init__(size, rate="stim(t,i)")
+
+        # namespace allows adding variables and functions to the resolution process of string equations of class brian2.Group
+        # - see https://brian2.readthedocs.io/en/stable/advanced/namespaces.html
+        self._devices.namespace["stim"] = stimulus
+
+    @staticmethod
+    @check_units(
+        size=1,
+        pattern=1,
+        block_interval=1,
+        one_rate=Hz,
+        zero_rate=Hz,
+        t=ms,
+        stimulus_dt=ms,
+    )
+    def create_blocked_rate(
+        size: int,
+        pattern: np.ndarray,
+        block_interval: Tuple[int, int],
+        one_rate: Quantity,
+        zero_rate: Quantity,
+        t: Quantity,
+        stimulus_dt: Quantity,
+    ):
+        """
+        generate an array of rates across devices numbering 'size' and time blocks of length stimulus_dt
+        - rates of individual devices are set according to pattern (mask of one devices) and one_rate (rate of one devices)
+        and zero_rate (rate of zero devices) across time blocks in the interval block_interval ( [start,end) );
+        all rates in time blocks not in the interval block_interval are 0.0
+
+        :param size: size of the group ~ number of spike devices
+        :param pattern:  pattern (mask) across all spike devices in the group (shape: (size,) ) - used for setting rate for all indices in block_interval
+        :param block_interval: half-open interval ( [start,end) ) of indices of block tb set to rate
+        :param t: simulation time [ms]
+        :param stimulus_dt: time step of the stimulus ~ size of one block for which rate is held constant at stimulus_block[i]
+        :return: rates for individual devices across time blocks of size stimulus_dt
+        """
+        if t < stimulus_dt:
+            raise ValueError(
+                f"t >= stimulus_dt must hold otw. ill-defined.Is t:{ t }, stimulus_dt: { stimulus_dt }."
+            )
+        if size != pattern.shape[0]:
+            raise ValueError(
+                "group size (param size) and length of first dimension of pattern (param pattern) differ."
+            )
+
+        num_blocks = int(np.ceil(t / stimulus_dt))
+
+        if not (
+            len(block_interval) == 2
+            and isinstance(block_interval[0], int)
+            and isinstance(block_interval[1], int)
+            and block_interval[1] > block_interval[0]
+            and block_interval[0] >= 0
+            and block_interval[1] < size
+        ):
+            raise ValueError(
+                f"block_interval must contain exactly two integer values x,y where y > x, x >= 0 and y < size (param size). Is {block_interval}."
+            )
+
+        x, y = block_interval
+
+        rate = np.zeros_like(pattern, dtype=float)
+        rate[pattern] = one_rate / Hz
+        rate[pattern == False] = zero_rate / Hz
+
+        # shape: t,i ~ t rows and i columns ~ one row represents spike rates across devices for one specific time block t
+        stimulus_block = np.zeros(num_blocks * size).reshape(num_blocks, size)
+        stimulus_block[x:y] = np.tile(rate, y - x).reshape(-1, rate.shape[0])
+        return TimedArray(stimulus_block * Hz, dt=stimulus_dt)
+
+    @property
+    def monitored(self):
+        data = super().monitored
+        stim, unit = convert_and_clean_brian2_quantity(self.stimulus)
+        data["device"]["stimulus"] = {"value": stim.values, "unit": unit}
+        return data
 
 
 class NeuronPopulation(SpikeDeviceGroup):

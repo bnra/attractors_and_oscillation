@@ -393,9 +393,8 @@ class BrianExperiment:
         for obj in [
             v
             for v in self._retrieve_callers_context().values()
-            if v.__class__ == NeuronPopulation
-            or v.__class__ == Synapse
-            or v.__class__ == PoissonDeviceGroup
+            if issubclass(v.__class__, SpikeDeviceGroup)
+            or issubclass(v.__class__, Synapse)
         ]:
             # get all StateMonitors, NeuronGroups, Synapses etc. (add Poisson)
             devices = [

@@ -1,11 +1,10 @@
 from abc import ABCMeta, abstractmethod
 import os
 import shutil
-from typing import Iterable, Tuple
+from typing import Iterable, Callable, Tuple, List
 import unittest
 from tqdm import tqdm
 import time
-from typing import Callable, Tuple, Dict, Any, List
 import sys
 
 
@@ -37,7 +36,7 @@ class TestCase(unittest.TestCase):
         setting up.
         do stuff.
         tearing down.
-        
+
     Calls t.setUp() which in turn calls t._setUp()
     """
 
@@ -59,24 +58,25 @@ class TestCase(unittest.TestCase):
         os.chdir(self.initial_dir)
         shutil.rmtree(self.tmp_dir)
 
-            
-def compare_iterables(should_dict:Iterable, is_dict:Iterable)->Tuple[Iterable,Iterable]:
+
+def compare_iterables(
+    should_dict: Iterable, is_dict: Iterable
+) -> Tuple[Iterable, Iterable]:
     should_diff = [k for k in should_dict if k not in is_dict]
     is_diff = [k for k in is_dict if k not in should_dict]
     return should_diff, is_diff
 
 
-
 class StdPipeSilencer(object):
-    
     class DummyFile(object):
-        def write(self, s): 
+        def write(self, s):
             pass
+
         def flush(self):
             pass
 
     def __init__(self, silence_out=True, silence_error=False):
-        
+
         self.silence_out = silence_out
         self.silence_error = silence_error
 
@@ -85,21 +85,21 @@ class StdPipeSilencer(object):
         self.error_back = None
 
     def __enter__(self):
-        
+
         if self.silence_out:
             self.out_back = sys.stdout
             sys.stdout = StdPipeSilencer.DummyFile()
-        
+
         if self.silence_error:
             self.out_error = sys.stderr
-            sys.stderr = StdPipeSilencer.DummyFile() 
+            sys.stderr = StdPipeSilencer.DummyFile()
 
     def __exit__(self, exc_type, exc_value, tb):
 
         if self.silence_out:
             sys.stdout = self.out_back
             self.out_back = None
-        
+
         if self.silence_error:
             sys.stderr = self.error_back
             self.error_back = None
@@ -111,12 +111,13 @@ class StdPipeSilencer(object):
 class SpeedTest(metaclass=ABCMeta):
     """
     abstract base class for speed tests
-    subclass and 
+    subclass and
     - (opt.) add setup code in def setUp()
     - (opt.) add teardown code in tearDown()
     - add test code in the sub classes run()
-    - (opt., recommended) set # iterations (iterations) and # trials (trials) as class variables of subclass 
+    - (opt., recommended) set # iterations (iterations) and # trials (trials) as class variables of subclass
     """
+
     def __init__(self):
         self.tmp_base_name = ".tmp_speed_test"
 
@@ -142,7 +143,6 @@ class SpeedTest(metaclass=ABCMeta):
     @abstractmethod
     def run():
         pass
-
 
 
 class SpeedTester:
@@ -176,11 +176,9 @@ class SpeedTester:
         :param trials: number of trials that are run
         :param iterations: number of iterations run per trial - iterations are reduced to single scalar
                             measure by reduce parameter in :meth:`SpeedTester.__init__()`
-        :return: set of single value statistics of each of the trials 
+        :return: set of single value statistics of each of the trials
         """
         statistics = []
-
-
 
         for _ in tqdm(range(trials)):
             trial = []
@@ -197,4 +195,3 @@ class SpeedTester:
         self._statistics = statistics
 
         return statistics
-

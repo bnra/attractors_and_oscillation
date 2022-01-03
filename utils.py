@@ -138,7 +138,9 @@ def convert_and_clean_brian2_quantity(x: Quantity) -> Tuple[np.ndarray, str]:
     # copies (np.asarray(x) is in-place)
     unit = get_brian2_base_unit(x)
     x_base = np.asarray(x)
-    return (x_base.item(), str(unit)) if x_base.size == 1 else (x_base, str(unit))
+
+    # if it's a scalar value (eg. array(3) - scalar/not nested - and not array([3]) - single nested value) unwrap else return np.ndarray
+    return (x_base.item(), str(unit)) if len(x_base.shape) == 0 else (x_base, str(unit))
 
 
 def get_brian2_unit(x: Quantity) -> Unit:
