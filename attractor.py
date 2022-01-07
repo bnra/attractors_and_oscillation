@@ -34,3 +34,32 @@ def compute_conductance_scaling(patterns:np.ndarray, sparsity:float):
         s = np.maximum(0, delta_s + s)
     
     return s
+
+
+def compute_conductance_scaling_single_clip(patterns:np.ndarray, sparsity:float):
+    """
+    compute the scaling factor of the conductance by summing over patterns and clipping the result  
+
+    Here scaling factor s is computed:
+    - g = g_EE / C_EE * s
+    - process: i) for each pattern compute s^p_ij = (n_i^p / sparsity - 1) (n_j^p / sparsity - 1) 
+              ii) s_ij = sum_p s^p_ij 
+              iii) s_ij = max(0, s_ij)
+
+
+    :param patterns: patterns tb used in compution shape: (p,size) where size is the size of the pattern
+                    (= size of E population) and p is the number of patterns
+    :param sparsity: sparsity of the patterns
+    :return: scaling factor s for conductances (shape: (size,size))
+    """
+
+    if sparsity < 0.0 or sparsity > 1.0:
+        raise ValueError(f"sparsity must be in [0,1]. Is {sparsity}.")
+
+    # patterns: shape (num_p, size) one row ~ a pattern; ij,ib->jb: i) create outer product for each row ii) sum over rows
+    # (np.sum(np.vstack([np.outer(p,p).reshape(1,p.size, p.size) for p in patterns / sparsity - 1]), axis=0))
+    pat = patterns / sparsity - 1
+    s = np.einsum('ij,ib->jb', pat, pat)
+    return np.maximum(0,s)
+
+
