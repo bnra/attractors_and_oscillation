@@ -318,7 +318,8 @@ def instantaneous_rate_from_spike_train(
 
     :return: instantaneous firing rate - population average rate for each time step
     """
-    spikes = np.hstack(list(spike_train.values()))
+    spike_events = list(spike_train.values())
+    spikes = np.hstack(spike_events) if len(spike_events) > 0 else np.array([])
     vals, counts = np.unique(spikes, return_counts=True)
 
     rate = np.zeros(values_in_interval(0.0, t, dt))

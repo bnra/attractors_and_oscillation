@@ -1,5 +1,5 @@
 import matplotlib
-from typing import Dict, Iterator, Union, List, Tuple
+from typing import Dict, Iterable, Iterator, Union, List, Tuple
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 import numpy as np
@@ -73,7 +73,11 @@ def plot_spike_train(
     points = {}
     offset = 0
     for pn in pop_name:
-        ids, spikes = list(zip(*sorted(train[pn].items(), key=lambda x: int(x[0]))))
+        ids, spikes = (
+            list(zip(*sorted(train[pn].items(), key=lambda x: int(x[0]))))
+            if len(train[pn].keys()) > 0
+            else [[], []]
+        )
         points[pn] = []
         for i, spike in zip(ids, spikes):
             points[pn].append(
@@ -91,7 +95,9 @@ def plot_spike_train(
 
     ax.set_xlabel("time [ms]")
     ax.set_ylabel("ids")
-    ax.legend(*[*zip(*[(tuple(points[pn]), pn) for pn in pop_name])])
+    ax.legend(
+        *[*zip(*[(tuple(points[pn]), pn) for pn in pop_name if len(points[pn]) > 0])]
+    )
 
     # significantly faster than creating a legend for large datasets
     # data points in yrange 10-90%: 1:4 split: 80/5 = 16 -> [10, 73], [74, 90] -> mid points 42, mid points 82
@@ -103,14 +109,16 @@ def plot_spike_train(
     # )
 
 
-def plot_voltages(
+def plot_variable(
     fig: matplotlib.figure.Figure,
     ax: matplotlib.axes.Axes,
     times,
     pop_name: List[str],
     ids: Dict[str, List[int]],
-    voltages: Dict[str, np.ndarray],
+    variable: Dict[str, np.ndarray],
     color: Dict[str, Iterator],
+    xlabel: str,
+    ylabel: str,
 ):
     """
     plot of voltages of excitatory and inhibitory population
@@ -120,23 +128,26 @@ def plot_voltages(
     :param times: time points
     :param pop_name: names of populations tb plotted in order
     :param ids_e: ids of neurons by population
-    :param voltages: voltages by neuron id and population
+    :param variable: variable by neuron id and population
     :param color: iterator over colors by population
+    :param xlabel: label for the x axis
+    :param ylabel: label for the y axis
     """
 
     for pn in pop_name:
         for i, id_ in enumerate(ids[pn]):
-            v = voltages[pn][i]
+            v = variable[pn][i]
 
             ax.plot(
                 times,
                 v,
                 label=f"{pn}: {id_}",
                 color=next(color[pn]) if pn in color.keys() else None,
+                alpha=0.7,
             )
 
-    ax.set_ylabel("potential [mV]")
-    ax.set_xlabel("time [ms]")
+    ax.set_ylabel(ylabel)  # "potential [mV]")
+    ax.set_xlabel(xlabel)  # "time [ms]")
     ax.legend()
 
 
@@ -440,13 +451,57 @@ class ExperimentPlotter:
             )
         )
 
-    def plot_voltages(
+    def plot_voltage(
         self,
         pop_name: List[str] = [],
         ids: Dict[str, List[int]] = {},
         color: Dict[str, str] = {},
     ):
+        """
+        plot voltages assuming specific neuron model for E and I populations
+        """
+        if len(pop_name) == 0:
+            pop_name = [self.pop_name_e, self.pop_name_i]
+        self.plot_variable(
+            ["v" if p != self.pop_name_e else "v_s" for p in pop_name],
+            xlabel="voltages [mV]",
+            scale=1000,
+            pop_name=pop_name,
+            ids=ids,
+            color=color,
+        )
+
+    def plot_variable(
+        self,
+        variable: Union[str, List[str]],
+        xlabel: str,
+        scale: float = 1.0,
+        pop_name: List[str] = [],
+        ids: Dict[str, List[int]] = {},
+        color: Dict[str, str] = {},
+    ):
+        """
+        :param variable: variable tb plotted or list of variable_names to be mapped to elements of pop_name
+        :param xlabel: label of the x axis
+        :param scale: factor by which the variable values provided in __init__() param data are tb scaled
+        :param pop_name: names of the populations tb plotted - by default uses __init__() params pop_e and pop_i
+        :param ids: mapping of population names to ids for which the variable is tb plotted
+        :param color: mapping of population names to colors
+        """
         pop_name = [self.pop_name_e, self.pop_name_i] if pop_name == [] else pop_name
+
+        if not isinstance(variable, str) and (
+            not isinstance(variable, List) or len(variable) != len(pop_name)
+        ):
+            raise ValueError(
+                "param variable is not of type string and either not of type List (neither) or not of the same length as pop_name"
+                + " - note that pop_name is of length 2 by default [self.pop_e,self.pop_i]."
+            )
+
+        variable = (
+            variable if not isinstance(variable, str) else [variable for _ in pop_name]
+        )
+
         ids = {pn: [0] for pn in pop_name} if ids == {} else ids
         if not all(
             [
@@ -467,44 +522,59 @@ class ExperimentPlotter:
                 raise ValueError(
                     f"for population {pn}: some ids in ids_e or/and ids_i not contained in data dictionary/Reader passed at initialization"
                 )
-        voltages = {}
-        for pn in pop_name:
-            # given in voltage V -> mV
-            v_var = "v_s" if pn == self.pop_name_e else "v"
-            vol, _, _ = restrict_to_interval(
-                (data[pn]["state"][v_var]["value"][ids[pn]] * 1000).T,
-                self.dt,
-                self.t_start,
-                self.t_end,
+        values = {}
+
+        for pn, v_var in zip(pop_name, variable):
+            idv = np.asarray(ids[pn])
+
+            val = (
+                (data[pn]["state"][v_var]["value"][idv] * scale).T
+                if not isinstance(data[pn]["state"][v_var], np.ndarray)
+                else (data[pn]["state"][v_var][idv] * scale).T
             )
-            voltages[pn] = vol.T
+            values[pn] = val
+
+        if not all([values[pn].size == values[pop_name[0]].size for pn in pop_name]):
+            raise Exception(
+                f"values of param variable: {variable} not all of same length ~ recorded with different time steps."
+            )
 
         # given in seconds s -> ms
+        # time is the specific timings during which the variables were measured
+        time = data[pop_name[0]]["state"]["t"]["value"] * 1000
+
+        # compute time step btw measurements: v_dt = t_sim / len(timings_v)
+        sim_time = self.data["meta"]["t"]["value"] * 1000
+        v_dt = sim_time / time.size
+
+        # restrict intervals
         time, _, _ = restrict_to_interval(
-            data[pop_name[0]]["state"]["t"]["value"] * 1000,
-            self.dt,
+            time,
+            v_dt,
             self.t_start,
             self.t_end,
         )
+        for pn, val in values.items():
+            val, _, _ = restrict_to_interval(
+                val,
+                v_dt,
+                self.t_start,
+                self.t_end,
+            )
+            values[pn] = val.T
 
         color_it = {}
         if self.pop_name_e in pop_name and self.pop_name_e not in color.keys():
-            color_it[self.pop_name_e] = color_its["E"](voltages[pn].size)
+            color_it[self.pop_name_e] = color_its["E"](len(ids[pn]))
         if self.pop_name_i in pop_name and self.pop_name_i not in color.keys():
-            color_it[self.pop_name_i] = color_its["I"](voltages[pn].size)
+            color_it[self.pop_name_i] = color_its["I"](len(ids[pn]))
 
         for pop, c_base in color.items():
-            color_it[pop] = sequential_palette(c_base, voltages[pop].size)
+            color_it[pop] = sequential_palette(c_base, values[pop].size)
 
         self.plots.append(
-            lambda fig, ax: plot_voltages(
-                fig,
-                ax,
-                time,
-                pop_name,
-                ids,
-                voltages,
-                color=color_it,
+            lambda fig, ax: plot_variable(
+                fig, ax, time, pop_name, ids, values, color_it, xlabel, "time [ms]"
             )
         )
 

@@ -1,8 +1,9 @@
 import os
 import shutil
 import re
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Tuple, Union
 import inspect
+import brian2
 from brian2.units.fundamentalunits import Quantity, get_unit, Unit
 import numpy as np
 
@@ -141,6 +142,18 @@ def convert_and_clean_brian2_quantity(x: Quantity) -> Tuple[np.ndarray, str]:
 
     # if it's a scalar value (eg. array(3) - scalar/not nested - and not array([3]) - single nested value) unwrap else return np.ndarray
     return (x_base.item(), str(unit)) if len(x_base.shape) == 0 else (x_base, str(unit))
+
+
+def unwrap_brian2_variable_view(
+    x: brian2.core.variables.VariableView,
+) -> Union[np.ndarray, Quantity]:
+    """
+    unwrap instance of :class:`brian2.core.variables.VariableView`
+
+    :param x: instance of :class:`brian2.core.variables.VariableView` tb unwrapped
+    :return: variable value
+    """
+    return x[:]
 
 
 def get_brian2_unit(x: Quantity) -> Unit:

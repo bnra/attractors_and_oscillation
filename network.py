@@ -1,4 +1,5 @@
 from typing import Callable, List, Tuple, Dict, Union, Iterable
+import brian2
 from brian2 import NeuronGroup, StateMonitor, TimedArray, ms, check_units
 from brian2.input.poissongroup import PoissonGroup
 from brian2.monitors.ratemonitor import PopulationRateMonitor
@@ -18,6 +19,7 @@ from utils import (
     retrieve_callers_context,
     retrieve_callers_frame,
     unique_idx,
+    unwrap_brian2_variable_view,
 )
 from connectivity import all2all, bernoulli
 
@@ -418,13 +420,16 @@ class NeuronPopulation(SpikeDeviceGroup):
 
         return data
 
+    def __len__(self):
+        return self.size
+
     def monitor(self, ids: List[int], variables: List[str] = [], dt: float = None):
         """
         Register neuron ids for monitoring of states neuron variables
 
         :param ids: list of neuron ids whose states are to be monitored for each neuron
         :param variables: list of variables that are to be monitored for each of the neurons
-        :param dt: time step to be used for monitoring - time step specified in :meth:`BrianExperiment.__init__()`
+        :param dt: time step to be used for monitoring - df: time step specified in :meth:`BrianExperiment.__init__()`
                    of enclosing instance of :class:`BrianExperiment` used
         """
 
@@ -474,20 +479,26 @@ class Synapse:
     multi-synapses (>1 synpase btw same source and dest) not supported (see member multisynaptic_index of :class:`brian2.synapses.synapses.Synapses`)
     """
 
-    def __init__(self, synapse_object: Synapses):
+    def __init__(
+        self, synapse_object: Synapses, synapse_params: Dict[str, np.ndarray] = {}
+    ):
         """
         :param synapse_object: instance which is wrapped by this class
+        :param synapse_params: parameters that are set on instance of :class:`brian2.Synapses`
         """
+
+        # retrieve top most stack frame of a function call made to a function that does not reside within this file
+        # eg calls from Connector.__call__ will be 'peeled away' as well and the call frame that calls Connector.__call__ will be returned
+        frame_info = retrieve_callers_frame(
+            lambda fi: os.path.abspath(fi.filename) != os.path.abspath(__file__)
+        )
 
         self._syn_obj = synapse_object
 
-        # retrieve top most stack frame of a function call made to a function that does not reside within this file
-        frame_info = retrieve_callers_frame(
-            lambda fi: fi.filename != os.path.abspath(__file__)
-        )
         context = retrieve_callers_context(frame_info)
         self.source = "Failed to find source in scope"
         self.target = "Failed to find target in scope"
+
         for k, v in context.items():
             if isinstance(v, SpikeDeviceGroup):
                 if v._pop == self._syn_obj.source:
@@ -496,7 +507,36 @@ class Synapse:
                 if v._pop == self._syn_obj.target:
                     self.target = {"name": k, "class": v.__class__.__name__}
 
+        # list of synapse params that are transparent on self
+        self._synapse_params = list(synapse_params.keys())
+
+        # make all parameters in synapse_params on the underlying synapse object transparent
+
+        for p in synapse_params.keys():
+            setattr(
+                self.__class__,
+                p,
+                property(
+                    lambda self: unwrap_brian2_variable_view(getattr(self._syn_obj, p))
+                ),
+            )
+
         self._mon = None
+
+    @property
+    def synapse_params(self):
+        """
+        :return: synapse parameters set on the underlying synapse object
+        """
+        params = {}
+        for p in self._synapse_params:
+            v = getattr(self, p)
+            if isinstance(v, Quantity):
+                vv, unit = convert_and_clean_brian2_quantity(v)
+                v = {"value": vv, "unit": unit}
+            params[p] = v
+
+        return params
 
     @property
     def synapses(self):
@@ -505,7 +545,9 @@ class Synapse:
         """
         # pre -and postsynaptic neuron of each synapse with index i are stored at index i of member syn_obj.i, syn_obj.j respectively
         # (where syn_obj is an instance of brian2.synapses.synapses.Synapses)
-        return list(zip(self._syn_obj.i, self._syn_obj.j))
+        return np.vstack(
+            (self._syn_obj.i, self._syn_obj.j)
+        ).T  # list(zip(self._syn_obj.i, self._syn_obj.j))
 
     @property
     def monitored(self):
@@ -530,15 +572,23 @@ class Synapse:
             else {}
         )
 
+    def __len__(self):
+        return len(self.synapses)
+
     def monitor(
-        self, synapses: List[Tuple[int, int]], variables: List[str], dt: float = None
+        self,
+        synapses: Union[np.ndarray, List[Tuple[int, int]]],
+        variables: List[str],
+        dt: Quantity = None,
     ):
         """
         Register synapses for monitoring
 
-        :param synapses: list of synapses defined as a tuple of the pre- and postsynaptic neuron ids that are to be monitored
+        :param synapses: group of synapses defined as a tuple of the pre- and postsynaptic neuron ids that are to be monitored
+                        - note that if this instance manages a large number of synapses and the number of elements provided
+                        is of the same order mapping to brian2 indices will be prohibitively expensive unless param synapses == Synapse.synapses (property)
         :param variables: list of variables that are to be monitored for each of the synapses
-        :param dt: time step to be used for monitoring - time step specified in :meth:`BrianExperiment.__init__()`
+        :param dt: time step to be used for monitoring - df: time step specified in :meth:`BrianExperiment.__init__()`
                    of enclosing instance of :class:`BrianExperiment` used
         """
         missing_vars = [v for v in variables if v not in self._syn_obj.variables.keys()]
@@ -548,7 +598,28 @@ class Synapse:
                 + f" definition: { missing_vars }(see class Connector for definition)"
             )
         syn_ids = self.synapses
-        ids_monitored = [syn_ids.index(s) for s in synapses]
+
+        if not isinstance(synapses, np.ndarray):
+            synapses = np.asarray(synapses)
+
+        # determine brian2 indices - np logic used to remove bottleneck
+
+        if synapses.size == syn_ids.size and np.all(synapses == syn_ids):
+            ids_monitored = np.arange(syn_ids.shape[0])
+        else:
+            # treat subset
+            # note: that if this instance manages a large number of synapses and the number of elements provided
+            #       is of the same order this will be prohibitively expensive unless param synapses == Synapse.synapses (property)
+            ids_monitored = np.asarray(
+                [
+                    np.where(np.sum(syn_ids == s.reshape(-1, 2), axis=1) == 2)[0].item()
+                    for s in synapses
+                ]
+            )
+
+        if synapses.shape[0] != ids_monitored.size:
+            raise ValueError("Some synapses contained in param synapses do not exist.")
+
         # log after synaptic update
         # valid values for when={*, before_*, after_*}, where * in {'start', 'groups', 'thresholds', 'synapses', 'resets', 'end'}
         self._mon = StateMonitor(
@@ -587,6 +658,8 @@ class Connector:
             Callable[[List[int], List[int]], List[Tuple[int, int]]],
             Tuple[str, Dict[str, Union[int, float]]],
         ],
+        syn_params: Dict[str, Quantity] = {},
+        model: str = "",
         **kwargs,
     ) -> Synapse:
         """
@@ -599,6 +672,7 @@ class Connector:
         :param connect: Callable or tuple of specifier ct and params that specify the topology between the two instances of :class:`NeuronPopulation`
                         options for topologies in ct: 'all2all' | 'one2one' | 'bernoulli',
                         note that bernoulli requires param 'p'
+        :param syn_params: parameters tb set for the synaptic model on a per synapse basis
         :return: instance of :class:`Synapse` which allows interacting with the synapses created
         """
 
@@ -612,6 +686,31 @@ class Connector:
                 "Some ids in parameter sourceIds or destIds are not contained in sourcePop or destPop, respectively."
             )
 
+        clean_model_lines = [m.strip() for m in model.split("\n") if len(m.strip()) > 0]
+        # if len(clean_model_lines) > 0:
+        #    raise ValueError(clean_model_lines,[f"{m.split('=')[0].rstrip('+-/* ') if '=' in m else '/'} or {m.split('=')[1] if len(m.split('=')) > 1 else '/'} or {m.split(':')[0].rstrip(' ') if ':' in m else '/'}" for m in clean_model_lines])
+        for p, v in syn_params.items():
+            # lhs or rhs or variable definition (for v eg. 'v = s :volt' or 'v :volt')
+            #  not ( any([p == m.split("=")[0].rstrip(" ") for m in clean_model_lines if "=" in m]) or any([p in m.split("=")[1] for m in clean_model_lines if len(m.split("=")) > 1]) \
+            #    or any([p == m.split(":")[0].rstrip(" ") for m in clean_model_lines if ":" in m]))
+
+            # model strings only: '=', no '(+|*|/|-)=' - '(+|*|/|-)' fine if used as operator, ':' used for defining quantities
+            # not that 'w = s : volt' does not allow setting w directly (read only) - only by setting s
+            # force explicit definition as 'var : unit'
+
+            if not any(
+                [
+                    p == m.split(":")[0].rstrip(" ")
+                    for m in clean_model_lines
+                    if ":" in m
+                ]
+            ):
+                raise ValueError(
+                    f"variable {p} in param syn_params is not 'explicitly' defined ('var : unit') in model string. Only variables explicitly defined in model string can be set."
+                )
+
+        if model != "":
+            kwargs["model"] = model
         syn = self.synapse_type(sourcePop._pop, destPop._pop, **kwargs)
 
         if isinstance(connect, tuple):
@@ -648,4 +747,24 @@ class Connector:
             frm, to = [np.array(e) for e in zip(*connect(sourceIds, destIds))]
             syn.connect(i=frm, j=to)
 
-        return Synapse(syn)
+        if not all(
+            [
+                hasattr(syn, p)
+                and v.size == len(getattr(syn, p))
+                and (
+                    not isinstance(v, Quantity)
+                    or get_brian2_base_unit(v) == get_brian2_base_unit(getattr(syn, p))
+                )
+                for p, v in syn_params.items()
+            ]
+        ):
+            raise ValueError(
+                "Some of the parameters in syn_params are not set as attributes of the synapse object or their values are not of the same size as the number of synapses "
+                + "or they are either not unitless (not a brian2 quantity) or their brian2 unit does not match."
+            )
+
+        for p, v in syn_params.items():
+            # checks done above
+            setattr(syn, p, v.ravel())
+
+        return Synapse(syn, syn_params)

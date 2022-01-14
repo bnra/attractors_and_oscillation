@@ -548,12 +548,17 @@ class BrianExperiment:
                     for k, v in self._retrieve_callers_context().items()
                     if v.__class__ == Synapse
                 ]:
+
                     sn[k] = Node()
                     sn[k]["source"] = v.source
+
                     sn[k]["target"] = v.target
                     sn[k]["ids"] = np.asarray(v.synapses)
+                    sn[k]["synapse_params"] = v.synapse_params
+
                     mon_data = v.monitored
                     for mon in mon_data.keys():
+
                         sn[k][mon] = Node()
                         for var, val in mon_data[mon].items():
                             sn[k][mon][var] = np.asarray(val)

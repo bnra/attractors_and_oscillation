@@ -1,5 +1,14 @@
 import itertools
-from brian2 import StateMonitor, SpikeMonitor, PopulationRateMonitor, ms, kHz, Hz, mV
+from brian2 import (
+    StateMonitor,
+    SpikeMonitor,
+    PopulationRateMonitor,
+    ms,
+    kHz,
+    Hz,
+    mV,
+    volt,
+)
 import numpy as np
 
 
@@ -246,7 +255,7 @@ class TestSynapses(TestCase):
             connect = Connector(synapse_type="static")
             S = connect(x, y, x.ids, y.ids, connect=("all2all", {}))
 
-            self.assertEqual(S.synapses, list(itertools.product(x.ids, y.ids)))
+            self.assertTrue(np.all(S.synapses == np.array(list(itertools.product(x.ids, y.ids)))))
 
     def test_attributes_source_name_and_target_name_when_synapse_initialized_should_set_to_name_of_respective_neuron_population(
         self,
@@ -705,7 +714,7 @@ class TestConnector(TestCase):
             connect = Connector(synapse_type="static")
             S = connect(E, I, E.ids, I.ids, connect=("all2all", {}))
 
-            self.assertEqual(S.synapses, list(itertools.product(E.ids, I.ids)))
+            self.assertTrue(np.all(S.synapses == np.array(list(itertools.product(E.ids, I.ids)))))
 
     def test_when_calling_with_connect_set_to_one2one_should_connect_each_pre_to_respective_postsynaptic_neurons_at_same_index(
         self,
@@ -728,7 +737,8 @@ class TestConnector(TestCase):
 
             connect = Connector(synapse_type="static")
             S = connect(E, I, E.ids, I.ids, connect=("one2one", {}))
-            self.assertEqual(S.synapses, list(zip(E.ids, I.ids)))
+
+            self.assertTrue(np.all(S.synapses == np.array((E.ids, I.ids)).T))
 
     def test_when_calling_with_connect_set_to_bernoulli_should_connect_each_pre_to_each_postsynaptic_neuron_with_prob_p(
         self,
@@ -809,4 +819,100 @@ class TestConnector(TestCase):
             connect = Connector(synapse_type="static")
             S = connect(E, I, E.ids, I.ids, connect=con)
 
-            self.assertEqual(S.synapses, con(E.ids, I.ids))
+            self.assertTrue(np.all(S.synapses == np.array(list(itertools.product(E.ids, I.ids)))))
+
+    def test_when_providing_parameter_tb_and_parameter_in_model_string_should_set_parameter_accordingly(
+        self,
+    ):
+
+        P = NeuronPopulation(10, "dv/dt = (1-v)/tau : 1", threshold="v>-30mV")
+        Q = NeuronPopulation(10, "dv/dt = (1-v)/tau : 1", threshold="v>-30mV")
+        # crucial to define model='w' : adds variable w to Synapses object which allows modifying the variable
+        con = Connector()
+        w = np.arange(len(P) * len(Q)) * volt
+        S = con(
+            P,
+            Q,
+            P.ids,
+            Q.ids,
+            connect=("all2all", {}),
+            syn_params={"w": w},
+            model="w : volt",
+            on_pre="v += w",
+        )
+
+        self.assertTrue(np.all(w == S._syn_obj.w))
+
+    def test_when_providing_parameter_and_parameter_name_on_rhs_in_model_string_should_set_parameter_accordingly(
+        self,
+    ):
+
+        P = NeuronPopulation(10, "dv/dt = (1-v)/tau : 1", threshold="v>-30mV")
+        Q = NeuronPopulation(10, "dv/dt = (1-v)/tau : 1", threshold="v>-30mV")
+        # crucial to define model='w' : adds variable w to Synapses object which allows modifying the variable
+        con = Connector()
+        sss = np.ones(len(P) * len(Q)) * 0.2 * volt
+
+        model = """
+        w = s * 2 : volt
+        s : volt
+        """
+        S = con(
+            P,
+            Q,
+            P.ids,
+            Q.ids,
+            connect=("all2all", {}),
+            syn_params={"s": sss},
+            model=model,
+            on_pre="v += w",
+        )
+
+        self.assertTrue(np.all(sss * 2 == S._syn_obj.w))
+
+    def test_when_providing_parameter_and_variable_not_expl_defined_in_model_string_should_raise_value_error(
+        self,
+    ):
+
+        P = NeuronPopulation(10, "dv/dt = (1-v)/tau : 1", threshold="v>-30mV")
+        Q = NeuronPopulation(10, "dv/dt = (1-v)/tau : 1", threshold="v>-30mV")
+        # crucial to define model='w' : adds variable w to Synapses object which allows modifying the variable
+        con = Connector()
+        weight = np.arange(len(P) * len(Q)) * volt
+        w = 0.0 * volt
+        model = """
+        w = s : volt
+        """
+
+        with self.assertRaises(ValueError):
+            S = con(
+                P,
+                Q,
+                P.ids,
+                Q.ids,
+                connect=("all2all", {}),
+                syn_params={"w": weight},
+                model=model,
+                on_pre="v += w",
+            )
+
+    def test_when_providing_parameter_tb_set_and_parameter_not_in_model_should_raise_value_error(
+        self,
+    ):
+
+        P = NeuronPopulation(10, "dv/dt = (1-v)/tau : 1", threshold="v>-30mV")
+        Q = NeuronPopulation(10, "dv/dt = (1-v)/tau : 1", threshold="v>-30mV")
+        # crucial to define model='w' : adds variable w to Synapses object which allows modifying the variable
+        con = Connector()
+        w = np.arange(len(P) * len(Q)) * volt
+        with self.assertRaises(ValueError):
+            S = con(
+                P,
+                Q,
+                P.ids,
+                Q.ids,
+                connect=("all2all", {}),
+                syn_params={"w": w},
+                model="s:volt",
+                on_pre="v += w",
+            )
