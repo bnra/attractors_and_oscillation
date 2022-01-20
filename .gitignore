@@ -2,6 +2,8 @@
 *.pyc
 .tmp
 .tmp_test
+.tmp_speed_test
+.mp_log
 docs
 data
 test/test_summary

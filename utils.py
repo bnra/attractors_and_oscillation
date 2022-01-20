@@ -28,6 +28,8 @@ class TestEnv:
         os.makedirs(self.tmp_dir)
         os.chdir(self.tmp_dir)
 
+        return self
+
     def __exit__(self, exc_type, exc_value, traceback):
         """
         makes the initial_dir the cwd and deletes the tmp_dir
@@ -49,7 +51,9 @@ def validate_file_path(path: str, ext: str = ""):
     Validate file path -  whether
     base path exists,
     file name has correct extension [verified only in case ext passed],
-    enforces naming conventions on basename only containing characters [a-zA-Z0-9_], length of 255
+    enforces naming conventions on basename only containing characters [a-zA-Z0-9_]
+    yet may start with '.' (hidden files)
+    and has a maximal length of 255
     (https://www.ibm.com/docs/en/aix/7.1?topic=files-file-naming-conventions)
 
 
@@ -65,11 +69,11 @@ def validate_file_path(path: str, ext: str = ""):
     if not head.endswith(ext):
         return f"Filename { head } does not have the correct extension { ext }."
     fname = head
-    if ext:
+    if ext != "":
         fname = head[: -len(ext)]
 
-    if len(fname) > (255 - len(ext)) or not re.fullmatch("[a-zA-Z0-9_]+", fname):
-        return f"Base file name { fname } must be of length <= 255 and contain only characters [a-zA-Z0-9_]."
+    if len(fname) > (255 - len(ext)) or not re.fullmatch("\\.?[a-zA-Z0-9_]+", fname):
+        return f"Base file name { fname } must be of length <= 255 and contain only characters [a-zA-Z0-9_] yet may start with '.' (hidden)."
     return ""
 
 

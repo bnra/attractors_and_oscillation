@@ -464,7 +464,7 @@ class ExperimentPlotter:
             pop_name = [self.pop_name_e, self.pop_name_i]
         self.plot_variable(
             ["v" if p != self.pop_name_e else "v_s" for p in pop_name],
-            xlabel="voltages [mV]",
+            ylabel="voltages [mV]",
             scale=1000,
             pop_name=pop_name,
             ids=ids,
@@ -474,7 +474,7 @@ class ExperimentPlotter:
     def plot_variable(
         self,
         variable: Union[str, List[str]],
-        xlabel: str,
+        ylabel: str,
         scale: float = 1.0,
         pop_name: List[str] = [],
         ids: Dict[str, List[int]] = {},
@@ -482,7 +482,7 @@ class ExperimentPlotter:
     ):
         """
         :param variable: variable tb plotted or list of variable_names to be mapped to elements of pop_name
-        :param xlabel: label of the x axis
+        :param ylabel: label of the y axis ( vs time on x axis )
         :param scale: factor by which the variable values provided in __init__() param data are tb scaled
         :param pop_name: names of the populations tb plotted - by default uses __init__() params pop_e and pop_i
         :param ids: mapping of population names to ids for which the variable is tb plotted
@@ -574,7 +574,7 @@ class ExperimentPlotter:
 
         self.plots.append(
             lambda fig, ax: plot_variable(
-                fig, ax, time, pop_name, ids, values, color_it, xlabel, "time [ms]"
+                fig, ax, time, pop_name, ids, values, color_it, "time [ms]", ylabel
             )
         )
 
