@@ -467,7 +467,7 @@ class Pool:
 
         for instance in itertools.product(*self.pvalues):
             instance = list(zip(self.plabels, instance))
-            fname = self.file_name_generator(instance)
+            fname = self.file_name_generator(list(kwargs.items()) + instance)
             fpath = os.path.join(base_path, fname)
             err = utils.validate_file_path(fpath, ext=".h5")
             if len(err) > 0:
@@ -495,7 +495,7 @@ class Pool:
             for p, v in instance:
                 kwg[p] = v
 
-            fname = self.file_name_generator(instance)
+            fname = self.file_name_generator(list(self.kwargs.items()) + instance)
             fpath = os.path.join(self.base_path, fname)
 
             kwg["path"] = fpath

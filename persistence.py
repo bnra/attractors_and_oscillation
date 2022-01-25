@@ -514,7 +514,11 @@ class FileMap:
                 raise ValueError(
                     f"Please provide a unique file name { head } already exists in directory { base_path }."
                 )
-        elif mode == "modify" or mode == "read":
+        elif mode == "modify":
+            path_err = validate_file_path(path, ".h5")
+            if not os.path.isfile(os.path.abspath(path)) and len(path_err) > 0:
+                raise ValueError(f"{path} is not a file nor a valid path for a file: {path_err}.")
+        elif mode == "read":
             if not os.path.isfile(os.path.abspath(path)):
                 raise ValueError(f"No such file found: {path}.")
         else:
@@ -541,6 +545,9 @@ class FileMap:
             self.file = tables.file.File(self.path, mode="w")
             return Writer(self.file, self.opath)
         elif self.mode == "modify":
+            if not os.path.isfile(self.path):
+                # create it
+                tables.file.File(self.path, mode="w").close()
             self.file = tables.file.File(self.path, mode="r+")
             return Writer(self.file, self.opath)
         else:

@@ -101,8 +101,8 @@ class ExperimentAnalysis:
 
         self.dt = experiment_data["meta"]["dt"]["value"] * 1000
         t = experiment_data["meta"]["t"]["value"] * 1000
-        self.t_start, self.t_end, _ = compute_time_interval(t, self.dt, t_start, t_end)
 
+        self.t_start, self.t_end, _ = compute_time_interval(t, self.dt, t_start, t_end)
         self._analysis["meta"] = {
             "t_start": {"value": self.t_start / 1000, "unit": "s"},
             "t_end": {"value": self.t_end / 1000, "unit": "s"},
