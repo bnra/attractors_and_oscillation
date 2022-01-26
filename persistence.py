@@ -362,6 +362,11 @@ class Writer(Reader):
         if error:
             raise KeyError(f"Keys must conform to following form: {error}")
 
+
+        # delete node if already exists / overwriting
+        if opath.join(self.opath, key) in self.file:
+            self.file.remove_node(opath.join(self.opath, key), recursive=True)
+
         if isinstance(value, Array):
             self.file.create_array(
                 self.opath, key, *value.args, obj=value.obj, **value.kwargs
@@ -371,9 +376,10 @@ class Writer(Reader):
                 self.opath, key, *value.args, obj=value.obj, **value.kwargs
             )
         elif isinstance(value, Node):
+
             self.file.create_group(self.opath, key)
         elif isinstance(value, Dict):
-            # non-tail recursive - allows defining it using magic fcts __delitem__, __getitem__
+            # non-tail recursive - allows defining it using magic fcts __delitem__, 
             self.file.create_group(self.opath, key)
             node = self[key]
             for nn, vv in value.items():

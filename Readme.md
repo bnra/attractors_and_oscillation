@@ -18,6 +18,7 @@ Interaction between oscillation and attractor dynamics
     $sphinx-build -b doctest .docs docs
 
 ## Installing dependencies
+- apt dependencies: build-essential, python3-tk
 - python3 -m pip install -r requirements.txt
 
 ## Testing

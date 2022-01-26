@@ -165,6 +165,19 @@ class TestClassWriter(TestCase):
         )
         file.close()
 
+    def test_when_setting_the_same_key_again_should_overwrite(self):
+        path = "file2.h5"
+        with FileMap(path, mode="write") as w:
+            w["a"] = "abc"
+            w["a"] = ""
+        file = tables.File(path, mode="r")
+        _, leaves = get_nodes(file, "/")
+        # raise ValueError(leaves["a"],leaves["a"].read())
+        self.assertTrue(
+            np.all(leaves["a"].read().astype(dtype=str) == np.array([""]))
+        )
+        file.close()
+
     def test_when_assigning_raggedly_nested_list_should_raise_value_error(self):
         path = "file2.h5"
 
