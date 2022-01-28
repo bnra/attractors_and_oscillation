@@ -354,12 +354,16 @@ if __name__ == "__main__":
         choices=["simple", "normal", "zscore"],
         help="run brian simulation",
     )
+    parser.add_argument(
+        "--path",
+        type=str,
+        required=True
+    )
 
     args = parser.parse_args()
 
     sim = args.sim
-
-    base_path = "/mnt/idp/zscore_exploration"
+    base_path = args.path
 
     if sim == "normal":
         params = {
@@ -377,15 +381,22 @@ if __name__ == "__main__":
     else:
         # "zscore"
 
+        # params = {
+        #     "sparsity": np.arange(0.08, 0.25, 0.02),
+        #     "numpatterns": [130],
+        #     "negoffsetsd": [0.8 + e for e in np.arange(0.0, 0.5, 0.1)],
+        #     "rpe": np.arange(1.0, 8.0, 1.0),
+        #     "rpi": np.arange(1.0, 8.0, 1.0),
+        # }
         params = {
             "sparsity": np.arange(0.08, 0.25, 0.02),
-            "numpatterns": [130],
-            "negoffsetsd": [0.8 + e for e in np.arange(0.0, 0.5, 0.1)],
-            "rpe": np.arange(1.0, 8.0, 1.0),
-            "rpi": np.arange(1.0, 8.0, 1.0),
         }
         kwargs = {
             "esize": 4000,
+            "numpatterns": 130,
+            "negoffsetsd": 0.8,
+            "rpe": 1.0,
+            "rpi": 1.0,
         }
         f = run_exp_zscore_sd
 

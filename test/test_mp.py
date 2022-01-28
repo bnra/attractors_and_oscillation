@@ -210,3 +210,42 @@ class TestFctInParallel(TestCase):
         self.assertTrue(
             all([s in result for s in should]) and len(should) == len(result)
         )
+
+
+class TestFctFileNameGenerator(TestCase):
+    def test_when_called_should_generator_file_name_where_keys_and_values_and_kv_pairs_are_separated_by_underscores(
+        self,
+    ):
+        res = mp.file_name_generator(
+            [
+                ("sname", "sval"),
+                ("num", 1000),
+                ("weight", 5.7),
+                ("sname", "sval"),
+                ("num", 1000),
+                ("weight", 5.7),
+            ]
+        )
+        self.assertEqual(
+            res, "sname_sval_num_1000_weight_5-70_sname_sval_num_1000_weight_5-70.h5"
+        )
+
+
+class TestFctFileNameParser(TestCase):
+    def test_when_called_with_file_name_where_keys_and_values_and_kv_pairs_are_separated_by_underscores_should_retrieve_kv_pairs(
+        self,
+    ):
+        res = mp.file_name_parser(
+            "sname_sval_num_1000_weight_5-70_sname_sval_num_1000_weight_5-70.h5"
+        )
+        self.assertEqual(
+            res,
+            [
+                ("sname", "sval"),
+                ("num", 1000),
+                ("weight", 5.7),
+                ("sname", "sval"),
+                ("num", 1000),
+                ("weight", 5.7),
+            ],
+        )

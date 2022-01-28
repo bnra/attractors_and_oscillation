@@ -51,7 +51,7 @@ def validate_file_path(path: str, ext: str = ""):
     Validate file path -  whether
     base path exists,
     file name has correct extension [verified only in case ext passed],
-    enforces naming conventions on basename only containing characters [a-zA-Z0-9_]
+    enforces naming conventions on basename only containing characters [a-zA-Z0-9_-]
     yet may start with '.' (hidden files)
     and has a maximal length of 255
     (https://www.ibm.com/docs/en/aix/7.1?topic=files-file-naming-conventions)
@@ -72,8 +72,8 @@ def validate_file_path(path: str, ext: str = ""):
     if ext != "":
         fname = head[: -len(ext)]
 
-    if len(fname) > (255 - len(ext)) or not re.fullmatch("\\.?[a-zA-Z0-9_]+", fname):
-        return f"Base file name { fname } must be of length <= 255 and contain only characters [a-zA-Z0-9_] yet may start with '.' (hidden)."
+    if len(fname) > (255 - len(ext)) or not re.fullmatch("\\.?[a-zA-Z0-9_-]+", fname):
+        return f"Base file name { fname } must be of length <= 255 and contain only characters [a-zA-Z0-9_-] yet may start with '.' (hidden)."
     return ""
 
 
@@ -188,13 +188,22 @@ class Brian2UnitError(Exception):
     pass
 
 
-def format_duration_ns(t: int):
+def split_into_temporal_components(t: int, full=False):
     """
-    create string representation of time duration in y, d, h, min, s, ms, mu_s, ns (y:years ~ 365 days)
-
-    :param t: time elapsed in nanoseconds (eg. as a difference of time points or since epoch see :meth:`time.time_ns()`)
-    :return: string representation of time with format: y, d, h, min, s, ms, mu_s, ns - where only duration components whose first increment is reached are used
+    split into significant temporal components (significant up until the largest non-zero component)
+    :param full: if set returns all temporal components
+    :return: values and labels of temporal components [ns, mu_s, ms, s, m, h, d, y]
     """
+    unit_length = {
+        "ns": 3,
+        "mu_s": 3,
+        "ms": 3,
+        "s": 2,
+        "m": 2,
+        "h": 2,
+        "d": 3,
+        "y": 4,
+    }
     t, ns = divmod(t, 1000)
     t, mu_s = divmod(t, 1000)
     t, ms = divmod(t, 1000)
@@ -202,15 +211,46 @@ def format_duration_ns(t: int):
     t, min = divmod(t, 60)
     t, h = divmod(t, 24)
     y, d = divmod(t, 365)
-    comps = [(ns, "ns")]
-    for c, l in zip(
-        [mu_s, ms, s, min, h, d, y], ["mu_s", "ms", "s", "min", "h", "d", "y"]
-    ):
-        if c != 0:
-            comps.append((c, l))
-        else:
-            break
-    return "  ".join([f"{c} {l}" for c, l in comps][::-1])
+    labels = ["ns", "mu_s", "ms", "s", "m", "h", "d", "y"]
+    values = [ns, mu_s, ms, s, min, h, d, y]
+    final_labels = []
+    found_nz = False
+    if not full:
+        for i in range(len(labels) - 1, -1, -1):
+            if found_nz or values[i] != 0:
+                final_labels.append(labels[i])
+                found_nz = True
+        final_labels = final_labels[::-1]
+    else:
+        final_labels = labels
+    return (
+        values[: len(final_labels)],
+        final_labels,
+        [unit_length[l] for l in final_labels],
+    )
+
+
+def format_duration_ns(t: int, drop_zeros=True):
+    """
+    create string representation of time duration in y, d, h, m, s, ms, mu_s, ns (y:years ~ 365 days)
+
+    :param t: time elapsed in nanoseconds (eg. as a difference of time points or since epoch see :meth:`time.time_ns()`)
+    :return: string representation of time with format: y, d, h, m, s, ms, mu_s, ns - where only duration components whose first increment is reached are used
+    """
+    (
+        values,
+        labels,
+        unit_lengths,
+    ) = split_into_temporal_components(t)
+    comps = zip(values, labels, unit_lengths)
+    if drop_zeros:
+        comps = [(values[0], labels[0], unit_lengths[0])]
+        for c, l, ul in zip(values[1:], labels[1:], unit_lengths[1:]):
+            if c != 0:
+                comps.append((c, l, ul))
+            else:
+                break
+    return "  ".join([f"{c:{ul}d} {l}" for c, l, ul in comps[::-1]])
 
 
 def unique_idx(x: np.ndarray) -> Tuple[np.ndarray, List[np.ndarray]]:

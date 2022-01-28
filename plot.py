@@ -355,6 +355,8 @@ class ExperimentPlotter:
 
         self.fig = None
         self.axes = None
+        self.fig_title = None
+        self.fig_window_title = None
 
         self.layout = layout
 
@@ -403,12 +405,22 @@ class ExperimentPlotter:
         else:
             for ax, f in zip(self.axes.ravel(), self.plots):
                 f(self.fig, ax)
+        if self.fig_title != None:
+            self.fig.suptitle(self.fig_title)
+        if self.fig_window_title != None:
+            self.fig.canvas.manager.set_window_title(self.fig_window_title)
 
     def save(self, path: str):
         plt.savefig(path)
 
     def show(self):
         plt.show()
+
+    def set_title(self, title):
+        self.fig_title = title
+    
+    def set_window_title(self, title):
+        self.fig_window_title = title
 
     def plot_spike_train(self, pop_name: List[str] = None, color: Dict[str, str] = {}):
         """

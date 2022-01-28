@@ -2,6 +2,7 @@ import itertools
 import multiprocessing
 import multiprocessing.connection
 import os
+import re
 import io
 import time
 import datetime
@@ -10,7 +11,7 @@ import sys
 from typing import Callable, List, Dict, Any, Tuple, Union
 import utils
 import numpy as np
-from utils import TestEnv
+from functools import reduce
 
 log_path = os.path.join(os.path.abspath(os.path.dirname(__file__)), ".mp_log")
 
@@ -211,10 +212,6 @@ class CaptureStandardStreams:
             raise exc_type(exc_value, traceback)
 
 
-def float_to_path(x: float):
-    return f"{x:.2f}".replace(".", "_")
-
-
 class MultiPipeCommunication:
     """
     create two linked communication objects with a set of pipes available as attributes under the provided stream names
@@ -394,6 +391,134 @@ class ProcessExperiment(multiprocessing.Process):
             self.com.send(self.com.END_OF_STREAM, stream=self.com.curfile)
 
 
+def float_to_path_component(x: float):
+    return f"{x:.2f}".replace(".", "-")
+
+
+def path_component_to_float(pc: str):
+    return float(pc.replace("-", "."))
+
+
+def file_name_generator(instance):
+    """
+    Generate a file name from key value pairs
+    (reversed by :func:`file_name_parser`)
+    """
+    return (
+        "_".join(
+            [
+                f"{c}_{float_to_path_component(v)}"
+                if isinstance(v, float)
+                else f"{c}_{v}"
+                for c, v in instance
+            ]
+        )
+        + ".h5"
+    )
+
+
+def file_name_parser(fname: str):
+    """
+    Parse key value pairs from a file name
+    (reversed by :func:`file_name_generator`)
+    """
+    pattern = "([^_]+)_([0-9]+-[0-9]+)|([^_]+)_([0-9]+)|([^_]+)_([^_-]+)"
+
+    pattern_verif = f"(({pattern})_)*({pattern})\\.h5"
+
+    if re.fullmatch(pattern_verif, fname) == None:
+        raise ValueError(
+            f"file name {fname} does not conform to pattern {pattern_verif}."
+        )
+
+    base = fname[: -len(".h5")]
+
+    m = re.compile(pattern)
+    variables = m.findall(base)
+
+    parameters = []
+    for flname, flval, iname, ival, sname, sval in variables:
+        if len(flname) > 0:
+            parameters.append((flname, path_component_to_float(flval)))
+        elif len(iname) > 0:
+            parameters.append((iname, int(ival)))
+        elif len(sname) > 0:
+            parameters.append((sname, sval))
+
+    return parameters
+
+
+class Progress:
+    def __init__(self, n: int):
+        self.n = n
+        self.len_format_n = 1
+        if n > 1:
+            self.len_format_n = (
+                int(np.ceil(np.log10(n)))
+                if n % 10 != 0
+                else int(np.ceil(np.log10(n))) + 1
+            )
+        self.t = time.time_ns()
+
+    def update(self, it):
+        def pad_str(s: str, n: int):
+            # return padded string and negative offset (if length of string > n)
+            return ((s + " " * n)[0:n], 0) if n >= len(s) else (s, len(s) - n)
+
+        spcg = "      "
+
+        values, labels, unit_lengths = utils.split_into_temporal_components(
+            time.time_ns() - self.t, full=True
+        )
+        values, labels, unit_lengths = values[3:7], labels[3:7], unit_lengths[3:7]
+        t_str = Progress.format_duration(values, labels, unit_lengths)
+
+        if it == 0:
+            vals = [f"{v:{ul}d}" for v, ul in zip(values, unit_lengths)]
+            labels = [
+                (" " * len(f"{v}") + l)[len(l) :] if len(f"{v}") > len(l) else l
+                for l, v in zip(labels, vals)
+            ]
+            str_comps = []
+            lbls = [f"[{'-'.join(labels[::-1])}]", "[%]", "it"]
+            vals = [
+                f"[{t_str[1]}]",
+                f"{it/self.n:2.2f}",
+                f"{it:{self.len_format_n}d}",
+            ]
+            for i, (k, v) in enumerate(
+                zip(
+                    lbls,
+                    vals,
+                )
+            ):
+                c, noff = pad_str(k, len(v))
+                if i == len(lbls) - 1:
+                    str_comps.append(f"{c}")
+                else:
+                    str_comps.append(
+                        f"{c}{spcg[:-noff if noff > 0 else len(spcg)] if noff <= len(spcg) else ''}"
+                    )
+            print("".join(str_comps) + " / total")
+
+        print(
+            f"[{t_str[1]}]{spcg}{it/self.n * 100.0:2.2f}{spcg}{it:{self.len_format_n}d} / {self.n}",
+            end="\r",
+        )
+
+    @staticmethod
+    def format_duration(values, labels, unit_lengths):
+        """
+        create string representation of time duration given the time increments (labels), their respective values (values) and their unit lengths (unit_lengths)
+
+        :return: string representation of time with format: y, d, h, m, s - where only duration components whose first increment is reached are used
+        """
+        comps = list(zip(values, labels, unit_lengths))[::-1]
+        return "-".join([f"{l}" for _, l, _ in comps]), "-".join(
+            [f"{c:{ul}d}" for c, _, ul in comps]
+        )
+
+
 class Pool:
     """
     Pool of instances of :class:`ProcessExperiment`
@@ -409,13 +534,8 @@ class Pool:
         num_procs: int = None,
         file_name_generator: Callable[
             [List[Tuple[str, Any]]], str
-        ] = lambda instance: "_".join(
-            [
-                f"{c}_{float_to_path(v)}" if isinstance(v, float) else f"{c}_{v}"
-                for c, v in instance
-            ]
-        )
-        + ".h5",
+        ] = file_name_generator,
+        progress: bool = True,
     ):
         """
         distribute the value ranges equally across as many processes as there are available cpus and execute the target function
@@ -440,11 +560,12 @@ class Pool:
         :param file_name_generator: function generating a file name (not a path) for an instance
                                     of the cartesian product of the value ranges in parameter parameters
                                     - default: :attr:`ProcessExperiment.log_path` is used
+        :param progress: show a continuously updating progress bar
         """
 
         base_path = os.path.abspath(base_path)
         if not os.path.isdir(base_path):
-            raise ValueError("No such directory: {base_path}.")
+            raise ValueError(f"No such directory: {base_path}.")
 
         if len(parameters.keys()) == 0 or not all(
             [len(v) > 0 for p, v in parameters.items()]
@@ -474,6 +595,11 @@ class Pool:
                 raise ValueError(
                     f"file_name_generator generated an invalid file_path {fpath} given {instance} producing the error '{err}'."
                 )
+
+        self.num_params = reduce(
+            lambda acc, x: acc * x, [len(vl) for vl in self.pvalues], 1
+        )
+        self.progress = progress
 
     def next_process(self, idx):
         exhausted = False
@@ -537,6 +663,12 @@ class Pool:
         for p, _ in processes[::-1]:
             p.start()
 
+        progress = None
+        it = 0
+        if self.progress:
+            progress = Progress(self.num_params)
+        progress.update(it)
+
         with Logger(path=log_path, stream_names=["stdout", "stderr"]) as logger:
 
             while len(processes) > 0:
@@ -548,8 +680,11 @@ class Pool:
                     if com.poll(stream=com.stdout, wait=1 / len(processes)):
                         msg = com.recvlines(stream=com.stdout)
                         stdouts[p.idx] += msg
-                        print(msg)
                         logger.logall(p.idx, "stdout", msg)
+
+                        if self.progress:
+                            it += 1
+                            progress.update(it)
 
                         if com.poll(stream=com.stderr, wait=0.05):
                             msg = com.recvlines(stream=com.stderr)
@@ -569,6 +704,9 @@ class Pool:
                             processes[i] = (p, com)
                             self.update_signal_handler(processes)
                             p.start()
+
+                    if progress and it != 0:
+                        progress.update(it)
 
         return stdouts, stderrs
 

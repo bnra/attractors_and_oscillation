@@ -207,7 +207,9 @@ class SingleProcessSim(SpeedTest):
         file_name_generator = (
             lambda instance: "_".join(
                 [
-                    f"{c}_{mp.float_to_path(v)}" if isinstance(v, float) else f"{c}_{v}"
+                    f"{c}_{mp.float_to_path_component(v)}"
+                    if isinstance(v, float)
+                    else f"{c}_{v}"
                     for c, v in instance
                 ]
             )
