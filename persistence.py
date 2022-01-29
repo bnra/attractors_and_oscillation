@@ -362,7 +362,6 @@ class Writer(Reader):
         if error:
             raise KeyError(f"Keys must conform to following form: {error}")
 
-
         # delete node if already exists / overwriting
         if opath.join(self.opath, key) in self.file:
             self.file.remove_node(opath.join(self.opath, key), recursive=True)
@@ -379,7 +378,7 @@ class Writer(Reader):
 
             self.file.create_group(self.opath, key)
         elif isinstance(value, Dict):
-            # non-tail recursive - allows defining it using magic fcts __delitem__, 
+            # non-tail recursive - allows defining it using magic fcts __delitem__,
             self.file.create_group(self.opath, key)
             node = self[key]
             for nn, vv in value.items():
@@ -392,7 +391,12 @@ class Writer(Reader):
             #   (hdf reads strings in bytes - not as python str objects - unicode)
             self.file.create_array(self.opath, key, obj=np.array(value))
 
-        elif isinstance(value, str) or isinstance(value, np.string_):
+        elif (
+            isinstance(value, str)
+            or isinstance(value, np.string_)
+            or isinstance(value, int)
+            or isinstance(value, float)
+        ):
             self.file.create_array(self.opath, key, obj=np.asarray([value]))
         else:
             raise ValueError(
@@ -523,7 +527,9 @@ class FileMap:
         elif mode == "modify":
             path_err = validate_file_path(path, ".h5")
             if not os.path.isfile(os.path.abspath(path)) and len(path_err) > 0:
-                raise ValueError(f"{path} is not a file nor a valid path for a file: {path_err}.")
+                raise ValueError(
+                    f"{path} is not a file nor a valid path for a file: {path_err}."
+                )
         elif mode == "read":
             if not os.path.isfile(os.path.abspath(path)):
                 raise ValueError(f"No such file found: {path}.")

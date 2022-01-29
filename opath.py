@@ -23,26 +23,26 @@ def verify(opath: str, path_type: str = "abs_path") -> str:
     if path_type == "single_component":
         return (
             ""
-            if re.fullmatch("[a-zA-Z0-9_]+", opath)
-            else f"{base_msg}single_component: [a-zA-Z0-9_]+"
+            if re.fullmatch("[a-zA-Z0-9_-]+", opath)
+            else f"{base_msg}single_component: [a-zA-Z0-9_-]+"
         )
     elif path_type == "abs_path":
         return (
             ""
-            if re.fullmatch("/(([a-zA-Z0-9_]+/)*[a-zA-Z0-9_]+)?", opath)
-            else f"{base_msg}abs_path: /(([a-zA-Z0-9_]+/)*[a-zA-Z0-9_]+)?"
+            if re.fullmatch("/(([a-zA-Z0-9_-]+/)*[a-zA-Z0-9_-]+)?", opath)
+            else f"{base_msg}abs_path: /(([a-zA-Z0-9_-]+/)*[a-zA-Z0-9_-]+)?"
         )
     elif path_type == "rel_path":
         return (
             ""
-            if re.fullmatch("([a-zA-Z0-9_]+/)*[a-zA-Z0-9_]+", opath)
-            else f"{base_msg}rel_path: ([a-zA-Z0-9_]+/)*[a-zA-Z0-9_]+"
+            if re.fullmatch("([a-zA-Z0-9_]+/)*[a-zA-Z0-9_-]+", opath)
+            else f"{base_msg}rel_path: ([a-zA-Z0-9_-]+/)*[a-zA-Z0-9_-]+"
         )
     elif path_type == "any_path":
         return (
             ""
-            if re.fullmatch("[/]?([a-zA-Z0-9_]+/)*[a-zA-Z0-9_]+|/", opath)
-            else f"{base_msg}any_path: [/]?([a-zA-Z0-9_]+/)*[a-zA-Z0-9_]+|/"
+            if re.fullmatch("[/]?([a-zA-Z0-9_-]+/)*[a-zA-Z0-9_-]+|/", opath)
+            else f"{base_msg}any_path: [/]?([a-zA-Z0-9_-]+/)*[a-zA-Z0-9_-]+|/"
         )
     else:
         raise OpathError(

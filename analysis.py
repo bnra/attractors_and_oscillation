@@ -11,6 +11,7 @@ from utils import (
     next_power_of_two,
     restrict_to_interval,
 )
+import analysis_utils
 
 
 class ExperimentAnalysis:
@@ -202,8 +203,6 @@ class ExperimentAnalysis:
         self,
         pop_name: List[str] = None,
         separate_intervals: bool = False,
-        # t_start: float = 10.0,
-        # t_end: float = None,
         f_lower_bound: float = 50.0,
         f_upper_bound: float = 300.0,
     ):
@@ -213,9 +212,6 @@ class ExperimentAnalysis:
 
         :param pop_name: list of populations to compute psd for - defaults to all NeuronPopulations
         :param separate_intervals: also compute psd for separate time intervals (using sliding window)
-        :param t_start: if set restricts signal to incl. lower bound (time [ms])
-        :param t_end: if set restricts signal to incl. upper bound (time [ms])
-                        - if t_end > simulation time ~ t_end=None
         :param f_lower_bound: does not consider frequencies (and resp. psd) below lower bound
         :param f_upper_bound: does not consider frequencies (and resp. psd) above upper bound
         """
@@ -276,6 +272,44 @@ class ExperimentAnalysis:
                         # "t_start": {"value": t_start / 1000, "unit": "s"},
                         # "t_end": {"value": t_end / 1000, "unit": "s"},
                     }
+
+    def analyze_peaks(
+        self, pop_name: List[str] = None, delta: float = 1.0, smoothed: bool = True
+    ):
+        """
+        analyze the peaks (& troughs) of  the population rate of neuron populations to a threshold delta using a time-wise symmetric OR rule
+        :param pop_name: population names for which peaks are tb detected
+        :param delta: threshold to which peaks are detected
+        :param smoothed: whether to analyze the smoothed or instantaneous population rate
+        """
+
+        pop_name = (
+            list(self._data["SpikeDeviceGroup"].keys())
+            if pop_name == None
+            else pop_name
+        )
+
+        for pn in pop_name:
+            if (
+                self._data["SpikeDeviceGroup"][pn]["device"]["class"]
+                == "NeuronPopulation"
+                and pn in self._analysis["SpikeDeviceGroup"]
+            ):
+                if smoothed:
+                    pop_rate = self._analysis["SpikeDeviceGroup"][pn]["smoothed_rate"][
+                        "value"
+                    ]
+                else:
+                    pop_rate = self._analysis["SpikeDeviceGroup"][pn][
+                        "instantaneous_rate"
+                    ]["value"]
+
+                mins, maxs = analysis_utils.detect_symmetric_peaks(pop_rate, delta)
+
+                self._analysis["SpikeDeviceGroup"][pn]["peaks"] = {
+                    "mins": mins,
+                    "maxs": maxs,
+                }
 
 
 def gaussian_smoothing(

@@ -365,3 +365,12 @@ def restrict_to_interval(
         round_to_res(idx_start * dt, dt),
         round_to_res(idx_end * dt, dt),
     )
+
+
+def logical_and(*args):
+    if len(args) < 2:
+        raise ValueError("Pass at least two boolean np.ndarrays.")
+    idx = args[0]
+    for a in args[1:]:
+        idx = np.logical_and(idx, a)
+    return idx
