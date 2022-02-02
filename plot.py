@@ -200,6 +200,40 @@ def plot_smoothed_rate(
     ax.legend()
 
 
+def plot_cell_rate(
+    fig: matplotlib.figure.Figure,
+    ax: matplotlib.axes.Axes,
+    pop_name: str,
+    cell_rate: np.ndarray,
+    unit: str,
+    ids: np.ndarray,
+    color: Dict[str, str],
+):
+    """
+    plot smooth rate of populations
+
+    :param fig: figure instance
+    :param ax: axis instance
+    :param cell_rate: cell rate and ids per neuron by population
+    :param unit: unit of cell rate
+    :param ids: neuron ids corresponding to cell rates
+    :param color: color by population
+
+    """
+    # dont use res here if anything use convolution or sth
+    ax.scatter(
+        ids,
+        cell_rate,
+        label=f"{pop_name} mean: {np.mean(cell_rate)} max: {np.max(cell_rate)}",
+        color=color[pop_name],
+        marker=".",
+        s=(72.0 / fig.dpi) ** 2,
+    )
+    ax.set_xlabel("ids")
+    ax.set_ylabel(f"cell rate [{unit}]")
+    ax.legend()
+
+
 def plot_multitaper_spectrum(
     fig: matplotlib.figure.Figure,
     ax: matplotlib.axes.Axes,
@@ -418,7 +452,7 @@ class ExperimentPlotter:
 
     def set_title(self, title):
         self.fig_title = title
-    
+
     def set_window_title(self, title):
         self.fig_window_title = title
 
@@ -668,7 +702,7 @@ class ExperimentPlotter:
         # note here dt == self.dt as inst rate at sim time step resolution
         dt = self.data["meta"]["dt"]["value"] * 1000
 
-        inst_rate = {
+        rate = {
             pn: (
                 restrict_to_interval(
                     data["smoothed_rate"]["value"],
@@ -701,7 +735,50 @@ class ExperimentPlotter:
                 fig,
                 ax,
                 time,
-                inst_rate,
+                rate,
+                color=color,
+            )
+        )
+
+    def plot_cell_rate(self, pop_name: str, color: Dict[str, str] = {}):
+
+        if self.analysis == None or not (
+            pop_name in self.analysis["SpikeDeviceGroup"].keys()
+            and "cell_rate" in self.analysis["SpikeDeviceGroup"][pop_name].keys()
+        ):
+            raise Exception(
+                "No analysis object passed for instantiation (__init__) or pop_name not in 'SpikeDeviceGroup'"
+                + " or 'cell_rate' not computed."
+            )
+
+        # note here dt == self.dt as inst rate at sim time step resolution
+        dt = self.data["meta"]["dt"]["value"] * 1000
+
+        data = self.analysis["SpikeDeviceGroup"][pop_name]
+
+        rate = restrict_to_interval(
+            data["cell_rate"]["cell_rate"]["value"],
+            dt,
+            self.t_start_al,
+            self.t_end_al,
+        )[0]
+        unit = data["cell_rate"]["cell_rate"]["unit"]
+        ids = data["cell_rate"]["ids"]
+
+        color = {}
+        if self.pop_name_e == pop_name and self.pop_name_e not in color.keys():
+            color[self.pop_name_e] = colors["E"]
+        if self.pop_name_i == pop_name and self.pop_name_i not in color.keys():
+            color[self.pop_name_i] = colors["I"]
+
+        self.plots.append(
+            lambda fig, ax: plot_cell_rate(
+                fig,
+                ax,
+                pop_name,
+                rate,
+                unit,
+                ids,
                 color=color,
             )
         )

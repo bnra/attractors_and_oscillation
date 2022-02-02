@@ -309,7 +309,110 @@ class ExperimentAnalysis:
                 self._analysis["SpikeDeviceGroup"][pn]["peaks"] = {
                     "mins": mins,
                     "maxs": maxs,
+                    "delta": delta,
+                    "smoothed": smoothed,
                 }
+
+    def analyze_cell_rate(self, pop_name: List[str] = None):
+        """
+        compute the cell rate per cell, the population average and the population maximum for populations
+
+        :param pop_name: populations for which the instantaneous rate is computed
+                         - df: None ~ all populations
+        """
+        pop_name = (
+            list(self._data["SpikeDeviceGroup"].keys())
+            if pop_name == None
+            else pop_name
+        )
+        for pn in pop_name:
+            if (
+                self._data["SpikeDeviceGroup"][pn]["device"]["class"]
+                == "NeuronPopulation"
+            ):
+
+                spike_train = {
+                    neuron: train * 1000
+                    for neuron, train in self._data["SpikeDeviceGroup"][pn]["spike"][
+                        "spike_train"
+                    ]["value"].items()
+                }
+
+                ids = self._data["SpikeDeviceGroup"][pn]["ids"]
+
+                ids, cell_rate = cell_rate_from_spike_train(
+                    self.t_start,
+                    self.t_end,
+                    ids,
+                    spike_train,
+                )
+
+                self._analysis["SpikeDeviceGroup"][pn]["cell_rate"] = {
+                    "ids": ids,
+                    "cell_rate": {"value": cell_rate, "unit": "Hz"},
+                    "pop_avg_cell_rate": {"value": np.mean(cell_rate), "unit": "Hz"},
+                    "pop_max_cell_rate": {"value": np.max(cell_rate), "unit": "Hz"},
+                }
+
+    def analyze_snr(self, bin_size=10.0):
+        """
+        compute the signal-to-noise ratio for populations analyzed in :meth:`ExperimentAnalysis.analyze_power_spectral_density`
+        """
+        for pn in self._analysis["SpikeDeviceGroup"].keys():
+            if (
+                not "psd_complete" in self._analysis["SpikeDeviceGroup"][pn].keys()
+                and self._data["SpikeDeviceGroup"][pn]["device"]["class"]
+                == "NeuronPopulation"
+            ):
+                psd = self._analysis["SpikeDeviceGroup"][pn]["psd_complete"]["psd"]
+                freq = self._analysis["SpikeDeviceGroup"][pn]["psd_complete"][
+                    "frequency"
+                ]["value"]
+
+                snr = snr(psd, freq, bin_size)
+
+                self._analysis["SpikeDeviceGroup"][pn]["snr"] = {
+                    "snr": snr,
+                    "bin_size": bin_size,
+                }
+
+    def analyze_synchronization_frequency(self):
+        """
+        compute the synchronization_frequency for populations analyzed in :meth:`ExperimentAnalysis.analyze_power_spectral_density`
+        """
+        for pn in self._analysis["SpikeDeviceGroup"].keys():
+            if (
+                not "psd_complete" in self._analysis["SpikeDeviceGroup"][pn].keys()
+                and self._data["SpikeDeviceGroup"][pn]["device"]["class"]
+                == "NeuronPopulation"
+            ):
+                psd = self._analysis["SpikeDeviceGroup"][pn]["psd_complete"]["psd"]
+                freq = self._analysis["SpikeDeviceGroup"][pn]["psd_complete"][
+                    "frequency"
+                ]["value"]
+
+                f, p = synchronization_frequency(psd, freq)
+
+                self._analysis["SpikeDeviceGroup"][pn]["synchronization_frequency"] = {
+                    "frequency": {"value": f, "unit": "Hz"},
+                    "power": p,
+                }
+
+    def analyze_avg_power(self):
+        """
+        compute the average power for populations analyzed in :meth:`ExperimentAnalysis.analyze_power_spectral_density`
+        """
+        for pn in self._analysis["SpikeDeviceGroup"].keys():
+            if (
+                not "psd_complete" in self._analysis["SpikeDeviceGroup"][pn].keys()
+                and self._data["SpikeDeviceGroup"][pn]["device"]["class"]
+                == "NeuronPopulation"
+            ):
+                psd = self._analysis["SpikeDeviceGroup"][pn]["psd_complete"]["psd"]
+
+                avg_pwr = np.mean(psd)
+
+                self._analysis["SpikeDeviceGroup"][pn]["avg_power"] = avg_pwr
 
 
 def gaussian_smoothing(
@@ -341,7 +444,7 @@ def gaussian_smoothing(
 
 
 def instantaneous_rate_from_spike_train(
-    t: float, dt: float, spike_train: Dict[str, float]
+    t: float, dt: float, spike_train: Dict[str, np.ndarray]
 ):
     """
     computes instantaneous rate from spike train
@@ -361,12 +464,42 @@ def instantaneous_rate_from_spike_train(
     idx = np.asarray(np.round(vals / dt), dtype=int)
 
     # as t,dt in ms rate * 1000/dt ~ Hz (where rate is rate at single step) ~ dt_s = dt / 1000, counts/pop_size / dt_s = counts/pop_size * (1000/dt)
-    # print(
-    #     f"c:{counts[0]}, pop size: {len(spike_train.keys())}, dt:{dt}, rate:{counts[0] / len(spike_train.keys()) * 1000 / dt}"
-    # )
     rate[idx] = counts / len(spike_train.keys()) * 1000 / dt
 
     return rate
+
+
+def cell_rate_from_spike_train(
+    t_start: float, t_end: float, ids: np.ndarray, spike_train: Dict[str, np.ndarray]
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    computes cell rate from spike train for each neuron individually
+
+    :param t_start: start time for analysis[ms]
+    :param t_end: end time for analysis [ms]
+    :param ids: neuron ids of the entire population
+    :param spike_train: spike trains of individual neurons
+
+    :return: ids and corresponding cell rate for each cell (time averaged)
+    """
+    # as t_start, t_end in ms * 1000 ~ Hz
+
+    cell_rates = np.array(
+        [
+            spike_train[str(i)][
+                np.logical_and(
+                    spike_train[str(i)] >= t_start, spike_train[str(i)] <= t_end
+                )
+            ].size
+            / (t_end - t_start)
+            * 1000
+            if str(i) in spike_train.keys()
+            else 0.0
+            for i in ids
+        ]
+    )
+
+    return ids, cell_rates
 
 
 def mt_psd(rate: np.ndarray, dt: float, nfft: int = None):
@@ -484,6 +617,29 @@ def synchronization_frequency(
     """
     idx = np.argmax(power_spectral_density)
     return frequency[idx], power_spectral_density[idx]
+
+
+def snr(psd: np.ndarray, frequency: np.ndarray, bin_size: float = 10.0):
+    """
+    signal-to-noise ratio from power spectral density
+
+    snr = P_signal / P_noise,
+    where P_signal is the total power in the bin around the peak frequency
+    and P_noise is the total power across the remainder of the spectrum
+
+    :param psd: power spectral density of the signal
+    :param frequency: corresponding frequencies of the psd [Hz]
+    :param bin_size:  size of the bin [Hz] around the peak frequency used to compute the signal
+    """
+
+    peak_idx = np.argmax(psd)
+    peak_freq = frequency[peak_idx]
+
+    signal_mask = np.logical_and(
+        frequency >= peak_freq - bin_size / 2.0, frequency <= peak_freq + bin_size / 2.0
+    )
+
+    return np.sum(psd[signal_mask]) / np.sum(psd[signal_mask == False])
 
 
 def cross_power_spectral_density():
