@@ -1,6 +1,18 @@
 import numpy as np
 
 
+def sim_vec(matrix: np.ndarray):
+    """
+    similarity of row vectors
+
+    r_ij = dot product of (row) vectors i,j of length l divided by l,
+    where matrix is of dimensions (n,l)
+    """
+    return matrix @ matrix.T / matrix.shape[1]
+
+
+
+
 def compute_conductance_scaling(patterns: np.ndarray, sparsity: float):
     """
     compute the scaling factor of the conductance  according to Battaglia, Treves 1998

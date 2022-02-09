@@ -123,6 +123,11 @@ class Reader:
                         f"{self.__class__.__name__} can only read .h5 files with leaf nodes of type numpy.ndarray. Is {type(x)}"
                     )
                 # determining byte strings in numpy: '[=<>|]S[0-9]+' where [0-9]+ is length of longest string, [=<>|] byte order
+                if re.fullmatch("[=<>|]S[0-9]+", x.dtype.str):
+                    x = x.astype(dtype=str)
+                    # unpack single strings
+                    if x.size == 1:
+                        x = x[0]
                 return (
                     x
                     if not re.fullmatch("[=<>|]S[0-9]+", x.dtype.str)

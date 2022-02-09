@@ -328,6 +328,7 @@ class NeuronPopulation(SpikeDeviceGroup):
         self._population = NeuronGroup(size, eqs, *args, **kwargs)
 
         self._eqs = eqs
+
         self._mon = None
         super().__init__()
 
@@ -402,7 +403,6 @@ class NeuronPopulation(SpikeDeviceGroup):
 
         data = super().monitored
         data["device"]["eqs"] = self._eqs
-
         if hasattr(self._mon, "recorded_variables"):
             data["state"] = {}
             rec_clean, unit_str = convert_and_clean_brian2_quantity(
@@ -480,7 +480,10 @@ class Synapse:
     """
 
     def __init__(
-        self, synapse_object: Synapses, synapse_params: Dict[str, np.ndarray] = {}
+        self,
+        synapse_object: Synapses,
+        synapse_params: Dict[str, np.ndarray] = {},
+        on_pre=None,
     ):
         """
         :param synapse_object: instance which is wrapped by this class
@@ -502,13 +505,23 @@ class Synapse:
         for k, v in context.items():
             if isinstance(v, SpikeDeviceGroup):
                 if v._pop == self._syn_obj.source:
-                    self.source = {"name": k, "class": v.__class__.__name__}
+                    self.source = {
+                        "name": k,
+                        "class": v.__class__.__name__,
+                        "ids": unwrap_brian2_variable_view(self._syn_obj.i),
+                    }
                 # can be both - autapse
                 if v._pop == self._syn_obj.target:
-                    self.target = {"name": k, "class": v.__class__.__name__}
+                    self.target = {
+                        "name": k,
+                        "class": v.__class__.__name__,
+                        "ids": unwrap_brian2_variable_view(self._syn_obj.j),
+                    }
 
         # list of synapse params that are transparent on self
         self._synapse_params = list(synapse_params.keys())
+
+        self.on_pre = on_pre
 
         # make all parameters in synapse_params on the underlying synapse object transparent
 
@@ -535,6 +548,10 @@ class Synapse:
                 vv, unit = convert_and_clean_brian2_quantity(v)
                 v = {"value": vv, "unit": unit}
             params[p] = v
+
+        if self.on_pre != None:
+            print(f"self.on_pre {self.on_pre} {type(self.on_pre)}")
+            params["on_pre"] = self.on_pre
 
         return params
 
@@ -660,6 +677,7 @@ class Connector:
         ],
         syn_params: Dict[str, Quantity] = {},
         model: str = "",
+        on_pre: str = None,
         **kwargs,
     ) -> Synapse:
         """
@@ -711,6 +729,8 @@ class Connector:
 
         if model != "":
             kwargs["model"] = model
+        if on_pre != None:
+            kwargs["on_pre"] = on_pre
         syn = self.synapse_type(sourcePop._pop, destPop._pop, **kwargs)
 
         if isinstance(connect, tuple):
@@ -767,4 +787,4 @@ class Connector:
             # checks done above
             setattr(syn, p, v.ravel())
 
-        return Synapse(syn, syn_params)
+        return Synapse(syn, syn_params, on_pre)

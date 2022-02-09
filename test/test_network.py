@@ -255,7 +255,9 @@ class TestSynapses(TestCase):
             connect = Connector(synapse_type="static")
             S = connect(x, y, x.ids, y.ids, connect=("all2all", {}))
 
-            self.assertTrue(np.all(S.synapses == np.array(list(itertools.product(x.ids, y.ids)))))
+            self.assertTrue(
+                np.all(S.synapses == np.array(list(itertools.product(x.ids, y.ids))))
+            )
 
     def test_attributes_source_name_and_target_name_when_synapse_initialized_should_set_to_name_of_respective_neuron_population(
         self,
@@ -279,9 +281,24 @@ class TestSynapses(TestCase):
             connect = Connector(synapse_type="static")
             S = connect(E, I, E.ids, I.ids, connect=("all2all", {}))
 
+            source_should = {
+                "name": "E",
+                "class": E.__class__.__name__,
+                "ids": S._syn_obj.i,
+            }
+            target_should = {
+                "name": "I",
+                "class": I.__class__.__name__,
+                "ids": S._syn_obj.j,
+            }
             self.assertTrue(
-                S.source == {"name": "E", "class": E.__class__.__name__}
-                and S.target == {"name": "I", "class": I.__class__.__name__}
+                all(
+                    [
+                        np.all(S.source[k] == source_should[k])
+                        and np.all(S.target[k] == target_should[k])
+                        for k in ["name", "class", "ids"]
+                    ]
+                )
             )
 
 
@@ -714,7 +731,9 @@ class TestConnector(TestCase):
             connect = Connector(synapse_type="static")
             S = connect(E, I, E.ids, I.ids, connect=("all2all", {}))
 
-            self.assertTrue(np.all(S.synapses == np.array(list(itertools.product(E.ids, I.ids)))))
+            self.assertTrue(
+                np.all(S.synapses == np.array(list(itertools.product(E.ids, I.ids))))
+            )
 
     def test_when_calling_with_connect_set_to_one2one_should_connect_each_pre_to_respective_postsynaptic_neurons_at_same_index(
         self,
@@ -819,7 +838,9 @@ class TestConnector(TestCase):
             connect = Connector(synapse_type="static")
             S = connect(E, I, E.ids, I.ids, connect=con)
 
-            self.assertTrue(np.all(S.synapses == np.array(list(itertools.product(E.ids, I.ids)))))
+            self.assertTrue(
+                np.all(S.synapses == np.array(list(itertools.product(E.ids, I.ids))))
+            )
 
     def test_when_providing_parameter_tb_and_parameter_in_model_string_should_set_parameter_accordingly(
         self,

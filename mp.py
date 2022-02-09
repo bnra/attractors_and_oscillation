@@ -229,9 +229,7 @@ class MultiPipeCommunication:
             self.streams["control"] = control_pipe
 
             for p_name in streams.keys():
-                setattr(
-                    self, p_name, self.streams[p_name]
-                )  # property(lambda self: self.streams[p_name]))
+                setattr(self, p_name, self.streams[p_name])
 
             self.control_signals = {"TERMINATE": False}
             self.END_OF_STREAM = "END_OF_STREAM"
@@ -459,6 +457,7 @@ class Progress:
                 else int(np.ceil(np.log10(n))) + 1
             )
         self.t = time.time_ns()
+        self.schema_printed = False
 
     def update(self, it):
         def pad_str(s: str, n: int):
@@ -473,7 +472,7 @@ class Progress:
         values, labels, unit_lengths = values[3:7], labels[3:7], unit_lengths[3:7]
         t_str = Progress.format_duration(values, labels, unit_lengths)
 
-        if it == 0:
+        if not self.schema_printed:
             vals = [f"{v:{ul}d}" for v, ul in zip(values, unit_lengths)]
             labels = [
                 (" " * len(f"{v}") + l)[len(l) :] if len(f"{v}") > len(l) else l
@@ -499,11 +498,12 @@ class Progress:
                     str_comps.append(
                         f"{c}{spcg[:-noff if noff > 0 else len(spcg)] if noff <= len(spcg) else ''}"
                     )
-            print("".join(str_comps) + " / total")
+            print("".join(str_comps) + " / total\n")
+            self.schema_printed = True
 
         print(
             f"[{t_str[1]}]{spcg}{it/self.n * 100.0:2.2f}{spcg}{it:{self.len_format_n}d} / {self.n}",
-            end="\r",
+            end="\r" if it != self.n else "\n",
         )
 
     @staticmethod
@@ -705,7 +705,7 @@ class Pool:
                             self.update_signal_handler(processes)
                             p.start()
 
-                    if progress and it != 0:
+                    if progress:
                         progress.update(it)
 
         return stdouts, stderrs

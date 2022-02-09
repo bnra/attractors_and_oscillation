@@ -7,6 +7,7 @@ import gc
 import time
 from tqdm import tqdm
 
+import brian2
 from brian2.units.fundamentalunits import Quantity
 from brian2 import ms, defaultclock, StateMonitor, Synapses
 from brian2.core.network import Network
@@ -589,6 +590,24 @@ class BrianExperiment:
                     fm["meta"]["run_times_in_ns"] = {
                         k: np.array(v) for k, v in self._timing.timings.items()
                     }
+                frame_info = retrieve_callers_frame(
+                    lambda fi: os.path.abspath(fi.filename) != os.path.abspath(__file__)
+                )
+
+                # save all parameters as we need them to resolve variables in equations
+                module = importlib.import_module(BrianExperiment.neuron_param_module)
+                fm["meta"]["neuron_parameters"] = {
+                    k: dict(
+                        zip(
+                            ("value", "unit"),
+                            convert_and_clean_brian2_quantity(module.__dict__[k]),
+                        )
+                    )
+                    if isinstance(module.__dict__[k], Quantity)
+                    else module.__dict__[k]
+                    for k in module.__dict__.keys()
+                    if not k in brian2.__dict__.keys()
+                }
 
         self._timing.add_timing("reset_context")
 

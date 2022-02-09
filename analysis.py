@@ -1,8 +1,10 @@
-from typing import Dict, Callable, Tuple, Union, List
+from typing import Any, Dict, Callable, Tuple, Union, List
 import numpy as np
+from parso import parse
 import scipy.signal
 import spectrum
 import tqdm
+import copy
 
 import persistence
 from utils import (
@@ -12,6 +14,7 @@ from utils import (
     restrict_to_interval,
 )
 import analysis_utils
+import parse_equations
 
 
 class ExperimentAnalysis:
@@ -315,7 +318,7 @@ class ExperimentAnalysis:
 
     def analyze_cell_rate(self, pop_name: List[str] = None):
         """
-        compute the cell rate per cell, the population average and the population maximum for populations
+        cell rate per cell, the population average and the population maximum for populations
 
         :param pop_name: populations for which the instantaneous rate is computed
                          - df: None ~ all populations
@@ -356,7 +359,7 @@ class ExperimentAnalysis:
 
     def analyze_snr(self, bin_size=10.0):
         """
-        compute the signal-to-noise ratio for populations analyzed in :meth:`ExperimentAnalysis.analyze_power_spectral_density`
+        signal-to-noise ratio for populations analyzed in :meth:`ExperimentAnalysis.analyze_power_spectral_density`
         """
         for pn in self._analysis["SpikeDeviceGroup"].keys():
             if (
@@ -378,7 +381,7 @@ class ExperimentAnalysis:
 
     def analyze_synchronization_frequency(self):
         """
-        compute the synchronization_frequency for populations analyzed in :meth:`ExperimentAnalysis.analyze_power_spectral_density`
+        synchronization_frequency for populations analyzed in :meth:`ExperimentAnalysis.analyze_power_spectral_density`
         """
         for pn in self._analysis["SpikeDeviceGroup"].keys():
             if (
@@ -400,7 +403,7 @@ class ExperimentAnalysis:
 
     def analyze_avg_power(self):
         """
-        compute the average power for populations analyzed in :meth:`ExperimentAnalysis.analyze_power_spectral_density`
+        average power for populations analyzed in :meth:`ExperimentAnalysis.analyze_power_spectral_density`
         """
         for pn in self._analysis["SpikeDeviceGroup"].keys():
             if (
@@ -413,6 +416,165 @@ class ExperimentAnalysis:
                 avg_pwr = np.mean(psd)
 
                 self._analysis["SpikeDeviceGroup"][pn]["avg_power"] = avg_pwr
+
+    def analyze_total_synaptic_conductance(
+        self,
+        pop_e: str,
+        pop_i: str,
+        synaptic_input_e_e_name: str = "x_AMPA",
+        synaptic_input_i_e_name: str = "x_GABA",
+        conductance_e_e_name: str = "gAMPA_p",
+        conductance_i_e_name: str = "gGABA_p",
+    ):
+        """
+        total synaptic conductance for populations pop_e assumes synaptic connectivity to pop_e
+        is limited to pop_e -> pop_e and pop_i -> pop_e
+
+        :param pop_e: excitatory population for which total synaptic conductance is computed
+        :param pop_i: inhibitory population which connects to pop_e
+        :return: total conductance and respective ids of pop_e
+        """
+        synapse_e_e = [
+            k
+            for k, v in self._data["Synapse"].items()
+            if v["source"]["name"] == pop_e and v["target"]["name"] == pop_e
+        ]
+        synapse_i_e = [
+            k
+            for k, v in self._data["Synapse"].items()
+            if v["source"]["name"] == pop_i and v["target"]["name"] == pop_e
+        ]
+        if not (
+            pop_e in self._data["SpikeDeviceGroup"].keys()
+            and pop_i in self._data["SpikeDeviceGroup"].keys()
+        ):
+            raise ValueError("No such populations pop_e or pop_i.")
+        if not (
+            "cell_rate" in self._analysis["SpikeDeviceGroup"][pop_e]
+            and "cell_rate" in self._analysis["SpikeDeviceGroup"][pop_i]
+        ):
+            raise ValueError(
+                f"cell rate must be analyzed for pop {pop_e} and pop {pop_i} prior to calling this method"
+            )
+        if not (len(synapse_e_e) > 0 and len(synapse_i_e) > 0):
+            raise ValueError(
+                f"No synapses matching {pop_e} or {pop_i} found - both synapses E->E and E->I must be present."
+            )
+        else:
+            synapse_e_e = synapse_e_e[0]
+            synapse_i_e = synapse_i_e[0]
+
+        if (
+            "on_pre" not in self._data["Synapse"][synapse_e_e]["synapse_params"].keys()
+            or "on_pre"
+            not in self._data["Synapse"][synapse_i_e]["synapse_params"].keys()
+        ):
+            raise ValueError(
+                "on_pre not in synapse_params for {synapse_e_e}, {synapse_i_e} - "
+                + "total conductance cannot be analyzed without on_pre being set on the respective synapses for simulation."
+            )
+
+        e_pop_ids = self._data["SpikeDeviceGroup"][pop_e]["ids"]
+
+        source_ids_e_e = self._data["Synapse"][synapse_e_e]["source"]["ids"]
+        target_ids_e_e = self._data["Synapse"][synapse_e_e]["target"]["ids"]
+
+        source_ids_i_e = self._data["Synapse"][synapse_i_e]["source"]["ids"]
+        target_ids_i_e = self._data["Synapse"][synapse_i_e]["target"]["ids"]
+
+        cell_rate_e = self._analysis["SpikeDeviceGroup"][pop_e]["cell_rate"][
+            "cell_rate"
+        ]["value"]
+        cell_rate_i = self._analysis["SpikeDeviceGroup"][pop_i]["cell_rate"][
+            "cell_rate"
+        ]["value"]
+
+        # parameters
+        parameters = self._data["meta"]["neuron_parameters"].load()
+
+        # parameters e_e
+        conductance_e_e = parameters[conductance_e_e_name]["value"]
+
+        synapse_params_e_e = self._data["Synapse"][synapse_e_e]["synapse_params"].load()
+        on_pre_e_e = self._data["Synapse"][synapse_e_e]["synapse_params"]["on_pre"]
+
+        neuron_variables_e_e = parse_equations.extract_variables_from_equations(
+            on_pre_e_e
+        )
+
+        for k, v in neuron_variables_e_e.items():
+            synapse_params_e_e[k] = v["neutral_element"]
+
+        parameters_e_e = copy.deepcopy(parameters)
+        parameters_e_e.update(synapse_params_e_e)
+
+        # parameters i_e
+        conductance_i_e = parameters[conductance_i_e_name]["value"]
+
+        synapse_params_i_e = self._data["Synapse"][synapse_i_e]["synapse_params"].load()
+        on_pre_i_e = self._data["Synapse"][synapse_i_e]["synapse_params"]["on_pre"]
+
+        neuron_variables_i_e = parse_equations.extract_variables_from_equations(
+            on_pre_i_e
+        )
+
+        for k, v in neuron_variables_i_e.items():
+            synapse_params_i_e[k] = v["neutral_element"]
+
+        parameters_i_e = parameters
+        parameters_i_e.update(synapse_params_i_e)
+
+        # compute total conductance e_e
+        eval_on_pre_e_e = parse_equations.evaluate_equations(on_pre_e_e, parameters_e_e)
+
+        syn_input_e_e = eval_on_pre_e_e[synaptic_input_e_e_name]
+
+        (
+            targets_e_e,
+            sources_per_target_e_e,
+            synaptic_input_e_e,
+        ) = compute_synaptic_input(source_ids_e_e, target_ids_e_e, syn_input_e_e)
+
+        target_ids_e_e, total_conductance_e_e = effective_total_synaptic_conductance(
+            targets_e_e,
+            sources_per_target_e_e,
+            cell_rate_e,
+            synaptic_input_e_e,
+            conductance_e_e,
+        )
+
+        # compute total conductance i_e
+        eval_on_pre_i_e = parse_equations.evaluate_equations(on_pre_i_e, parameters_i_e)
+
+        syn_input_i_e = eval_on_pre_i_e[synaptic_input_i_e_name]
+
+        (
+            targets_i_e,
+            sources_per_target_i_e,
+            synaptic_input_i_e,
+        ) = compute_synaptic_input(source_ids_i_e, target_ids_i_e, syn_input_i_e)
+
+        target_ids_i_e, total_conductance_i_e = effective_total_synaptic_conductance(
+            targets_i_e,
+            sources_per_target_i_e,
+            cell_rate_i,
+            synaptic_input_i_e,
+            conductance_i_e,
+        )
+
+        # assumes ids start at 0 and progressively increment
+        # inputs from pop_e and pop_i are opposed
+        # (a -> b ~ a dependes on b:)
+        #  dv_d/dt -> I_ds -> (v_d-v_s),
+        #  v_s -> IsynI -> x_GABA
+        #  dv_dt -> IsynP -> synP -> x_AMPA
+        total_conductance = np.zeros_like(e_pop_ids, dtype=float)
+        total_conductance[target_ids_i_e] -= total_conductance_i_e
+        total_conductance[target_ids_e_e] += total_conductance_e_e
+
+        self._analysis["SpikeDeviceGroup"][pop_e][
+            "total_conductance"
+        ] = total_conductance
 
 
 def gaussian_smoothing(
@@ -673,3 +835,72 @@ def restrict_frequency(
     if f_upper_bound != None:
         idx = np.logical_and(idx, frequency <= f_upper_bound)
     return frequency[idx], psd[idx]
+
+
+def compute_synaptic_input(
+    source_ids: np.ndarray,
+    target_ids: np.ndarray,
+    synaptic_input: Union[np.ndarray, float],
+):
+    """
+    synaptic input for each distinct id in source_ids by target_id
+
+    :param source_ids: ids representing the source of synaptic connections - each id represents the source neuron of a synapse
+    :param target_ids: ids representing the target of synaptic connections - each id represents the target neuron of a synapse
+    :param synaptic input: synaptic input by which a variable in the target neuron is modified on spike of source neuron
+                            - can be a constant or an array of same size as source_ids and target_ids
+    """
+
+    # significant speed up possible using sparse matrix format instead of dicts
+    unique_targets = np.unique(target_ids)
+
+    if isinstance(synaptic_input, np.ndarray) and synaptic_input.size > 1:
+        # sanity check
+        if not (
+            synaptic_input.size == source_ids.size
+            and source_ids.size == target_ids.size
+        ):
+            raise ValueError(
+                "size of synaptic_input does not match connectivity matrix"
+            )
+
+        indices = {tg: np.where(target_ids == tg) for tg in unique_targets}
+        sources = {}
+        input = {}
+        for tg in unique_targets:
+            sources[tg] = source_ids[indices[tg]]
+            # print(synaptic_input, indices[tg], tg)
+            input[tg] = synaptic_input[indices[tg]]
+
+    else:
+        sources = {tg: source_ids[np.where(target_ids == tg)] for tg in unique_targets}
+        input = np.ones_like(unique_targets, dtype=float) * synaptic_input
+    return unique_targets, sources, input
+
+
+def effective_total_synaptic_conductance(
+    target_ids: np.ndarray,
+    source_by_target: Dict[int, np.ndarray],
+    cell_rate: np.ndarray,
+    synaptic_input: Dict[int, np.ndarray],
+    conductance: float,
+):
+    """
+    effective total synaptic conductance for a group of synapses on a per target neuron basis
+
+    :param target_ids: target ids for which the total conductance is computed
+    :param source_by_target: source ids by the respective target neuron
+    :param cell_rate: cell rate of the source population
+    :param synaptic_input: synaptic input per source neuron by respective target neuron
+            (input by which variables in the target neuron are modified for a spike of the source neuron)
+    :param indegree: indegree of the respective target neurons (per neuon)
+    :param conductance: target_ids and corresponding total conductance (for this synapse group)
+    """
+    total_conductance = np.zeros_like(target_ids, dtype=float)
+    for i, tg in enumerate(target_ids):
+        # assumption the source population starts with id 0 and progressively increases id, ie id = index
+        total_conductance[i] = (
+            conductance
+            * np.sum(synaptic_input[tg] * cell_rate[source_by_target[tg]]).item()
+        )
+    return target_ids, total_conductance

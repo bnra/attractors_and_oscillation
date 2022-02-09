@@ -43,19 +43,22 @@ from differential_equations.neuron_equations import (
 from differential_equations.neuron_parameters import delay_AMPA, delay_GABA, eL_p, eL_i
 
 
-def run_exp_zscore_sd(
+
+
+def run_exp_given_weights(
+    sim_time:float,
     path: str,
-    sparsity: float,
-    numpatterns: int,
-    negoffsetsd: float,
+    patterns:np.ndarray,
+    scl:np.ndarray,
     esize: int,
     rpe: float,
     rpi: float,
 ):
 
-    sim_time = 500.0
 
     with BrianExperiment(persist=True, path=path, report_progress=True) as exp:
+
+        exp.persist_data["patterns"] = patterns
 
         # EI network
 
@@ -70,19 +73,6 @@ def run_exp_zscore_sd(
         # synapses
         connect = Connector(synapse_type="static")
 
-        # patterns
-        patterns = np.random.choice(
-            [True, False], p=[sparsity, 1.0 - sparsity], size=numpatterns * esize
-        ).reshape(numpatterns, esize)
-
-        # compute unclipped scaling
-        s = attractor.compute_conductance_scaling_unclipped(patterns, sparsity)
-
-        s = attractor.z_score(s)
-        # - negoffset - note (0,1)- gaussian
-        s = s - negoffsetsd
-
-        s = np.maximum(0, s)
 
         S_E_E = connect(
             E,
@@ -93,7 +83,7 @@ def run_exp_zscore_sd(
             model="scale : 1",
             on_pre="x_AMPA += alphax * scale",
             delay=delay_AMPA,
-            syn_params={"scale": s},
+            syn_params={"scale": scl},
         )
 
         # S_E_E.monitor(S_E_E.synapses[0:10], variables=["x_AMPA"])
@@ -182,6 +172,63 @@ def run_exp_zscore_sd(
         )
 
         exp.run(sim_time * ms)
+
+
+def run_exp_cov(
+    path: str,
+    sparsity: float,
+    numpatterns: int,
+    esize: int,
+    rpe: float,
+    rpi: float,
+):
+
+    sim_time = 500.0
+
+    # patterns
+    patterns = np.random.choice(
+        [True, False], p=[sparsity, 1.0 - sparsity], size=numpatterns * esize
+    ).reshape(numpatterns, esize)
+
+    # scale
+    s = attractor.covariation(patterns)
+
+    run_exp_given_weights(sim_time, path, patterns, s, esize, rpe, rpi)
+
+
+
+
+
+def run_exp_zscore_sd(
+    path: str,
+    sparsity: float,
+    numpatterns: int,
+    negoffsetsd: float,
+    esize: int,
+    rpe: float,
+    rpi: float,
+):
+
+    sim_time = 500.0
+
+
+    # patterns
+    patterns = np.random.choice(
+        [True, False], p=[sparsity, 1.0 - sparsity], size=numpatterns * esize
+    ).reshape(numpatterns, esize)
+
+    # compute unclipped scaling
+    s = attractor.compute_conductance_scaling_unclipped(patterns, sparsity)
+
+    s = attractor.z_score(s)
+    # - negoffset - note (0,1)- gaussian
+    s = s - negoffsetsd
+
+    s = np.maximum(0, s)
+
+    run_exp_given_weights(sim_time, path, patterns, s, esize, rpe, rpi)
+
+
 
 
 def run_exp(
@@ -195,7 +242,7 @@ def run_exp(
     rpi: float,
 ):
 
-    sim_time = 500.0
+    sim_time = 10.0  # 500.0
 
     normalizations = {
         "id": lambda x: x,
@@ -203,135 +250,24 @@ def run_exp(
         "zscore": attractor.z_score,
     }
 
-    with BrianExperiment(persist=True, path=path) as exp:
+    # patterns
 
-        # EI network
+    patterns = np.random.choice(
+        [True, False], p=[sparsity, 1.0 - sparsity], size=numpatterns * E.size
+    ).reshape(numpatterns, E.size)
 
-        # populations
-        E = NeuronPopulation(
-            esize, eqs_P, threshold="v_s>-30*mV", refractory=1.3 * ms, method="rk4"
-        )
-        I = NeuronPopulation(
-            esize // 4, eqs_I, threshold="v>-30*mV", refractory=1.3 * ms, method="rk4"
-        )
+    # scale factor
 
-        # synapses
-        connect = Connector(synapse_type="static")
+    # s = np.zeros(E.size * E.size).reshape(E.size, E.size)
 
-        # patterns
+    # compute unclipped scaling
+    s = attractor.compute_conductance_scaling_unclipped(patterns, sparsity)
+    s = normalizations[norm](s)
+    s = np.maximum(0, s)
+    s = s * scaling
 
-        patterns = np.random.choice(
-            [True, False], p=[sparsity, 1.0 - sparsity], size=numpatterns * E.size
-        ).reshape(numpatterns, E.size)
+    run_exp_given_weights(sim_time, path, patterns, s, esize, rpe, rpi)
 
-        # scale factor
-
-        # s = np.zeros(E.size * E.size).reshape(E.size, E.size)
-
-        # compute unclipped scaling
-        s = attractor.compute_conductance_scaling_unclipped(patterns, sparsity)
-        s = normalizations[norm](s)
-        s = np.maximum(0, s)
-        s = s * scaling
-
-        S_E_E = connect(
-            E,
-            E,
-            E.ids,
-            E.ids,
-            connect=("all2all", {}),
-            model="scale : 1",
-            on_pre="x_AMPA += alphax * scale",
-            delay=delay_AMPA,
-            syn_params={"scale": s},
-        )
-
-        # S_E_E.monitor(S_E_E.synapses[0:10], variables=["x_AMPA"])
-
-        S_E_I = connect(
-            E,
-            I,
-            E.ids,
-            I.ids,
-            connect=("bernoulli", {"p": 0.1}),
-            on_pre=PreEq_AMPA,
-            delay=delay_AMPA,
-        )
-
-        S_I_E = connect(
-            I,
-            E,
-            I.ids,
-            E.ids,
-            connect=("bernoulli", {"p": 0.1}),
-            on_pre=PreEq_GABA,
-            delay=delay_GABA,
-        )
-
-        S_I_I = connect(
-            I,
-            I,
-            I.ids,
-            I.ids,
-            connect=("bernoulli", {"p": 0.1}),
-            on_pre=PreEq_GABA,
-            delay=delay_GABA,
-        )
-
-        # initialize vars and monitor
-
-        E.set_pop_var(
-            variable="v_s",
-            value=draw_uniform(a=eL_p / mV - 5.0, b=eL_p / mV + 5.0, size=E.size) * mV,
-        )
-        E.set_pop_var(
-            variable="v_d",
-            value=draw_uniform(a=eL_p / mV - 5.0, b=eL_p / mV + 5.0, size=E.size) * mV,
-        )
-
-        E.monitor(
-            E.ids[0:2], ["v_s", "x_AMPA", "synP", "x_AMPA_ext", "synP_ext"], dt=1.0 * ms
-        )
-        E.monitor_spike(E.ids)
-
-        I.set_pop_var(
-            variable="v",
-            value=draw_uniform(a=eL_i / mV - 5.0, b=eL_i / mV + 5.0, size=I.size) * mV,
-        )
-
-        I.monitor(I.ids[0:2], ["v"], dt=1.0 * ms)
-        I.monitor_spike(I.ids)
-
-        # external inputs
-
-        # poisson device groups
-        PE = PoissonDeviceGroup(size=E.size, rate=rpe * kHz)
-        # PE.monitor_spike(PE.ids)
-
-        PI = PoissonDeviceGroup(size=I.size, rate=rpi * kHz)
-        # PI.monitor_spike(PI.ids)
-
-        # synapses
-        S_PE_E = connect(
-            PE,
-            E,
-            PE.ids,
-            E.ids,
-            connect=("one2one", {}),
-            on_pre="x_AMPA_ext += 1.5*alphax",
-            delay=delay_AMPA,
-        )
-        S_PI_I = connect(
-            PI,
-            I,
-            PI.ids,
-            I.ids,
-            connect=("one2one", {}),
-            on_pre=PreEq_AMPA_pois,
-            delay=delay_AMPA,
-        )
-
-        exp.run(sim_time * ms)
 
 
 def fmap(path, b, data, acc):
@@ -350,15 +286,11 @@ if __name__ == "__main__":
 
     parser.add_argument(
         "--sim",
-        type=bool,
-        choices=["simple", "normal", "zscore"],
+        type=str,
+        choices=["simple", "normal", "cov", "zscore"],
         help="run brian simulation",
     )
-    parser.add_argument(
-        "--path",
-        type=str,
-        required=True
-    )
+    parser.add_argument("--path", type=str, required=True)
 
     args = parser.parse_args()
 
@@ -378,6 +310,16 @@ if __name__ == "__main__":
         params = {"b": [2, 3, 4], "data": list(range(99990, 100000)), "acc": [1, 2]}
         f = fmap
         kwargs = {}
+    elif sim == "cov":
+        params = {"sparsity": np.array([0.01, 0.1])}
+        kwargs = {
+            "esize": 4000,
+            "numpatterns": 100,
+            "rpe": 1.0,
+            "rpi": 1.0,
+        }
+        f = run_exp_cov
+
     else:
         # "zscore"
 
@@ -388,12 +330,10 @@ if __name__ == "__main__":
         #     "rpe": np.arange(1.0, 8.0, 1.0),
         #     "rpi": np.arange(1.0, 8.0, 1.0),
         # }
-        params = {
-            "sparsity": np.arange(0.08, 0.25, 0.02),
-        }
+        params = {"sparsity": np.array([0.01, 0.1])}
         kwargs = {
             "esize": 4000,
-            "numpatterns": 130,
+            "numpatterns": 100, # try 20 or sth 
             "negoffsetsd": 0.8,
             "rpe": 1.0,
             "rpi": 1.0,
