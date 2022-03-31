@@ -5,6 +5,7 @@
 .tmp_speed_test
 .mp_log
 docs
+docs_pdf
 data
 test/test_summary
 

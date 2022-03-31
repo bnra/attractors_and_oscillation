@@ -125,16 +125,14 @@ class Reader:
                 # determining byte strings in numpy: '[=<>|]S[0-9]+' where [0-9]+ is length of longest string, [=<>|] byte order
                 if re.fullmatch("[=<>|]S[0-9]+", x.dtype.str):
                     x = x.astype(dtype=str)
-                    # unpack single strings
-                    if x.size == 1:
-                        x = x[0]
+
                 return (
                     x
                     if not re.fullmatch("[=<>|]S[0-9]+", x.dtype.str)
                     else x.astype(dtype=str)
                 )
             else:
-                raise KeyError(f"Key { key } not contained in { self }.")
+                raise KeyError(f"Key { key } not contained in { self.keys() }.")
 
     # do the magic to extract the key from the underlying h5-file
     # - for leaves return the numpy array
@@ -342,7 +340,7 @@ class Writer(Reader):
     def __delitem__(self, key: str):
         nodes, leaves = get_nodes(self.file, self.opath)
         if key not in list(nodes.keys()) + list(leaves.keys()):
-            raise KeyError(f"Key { key } not contained in { self }.")
+            raise KeyError(f"Key { key } not contained in { self.keys() }.")
         self.file.remove_node(opath.join(self.opath, key), recursive=True)
 
     # do the magic to create respective array in __set_item__():

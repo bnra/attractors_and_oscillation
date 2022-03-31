@@ -9,9 +9,44 @@ from network import NeuronPopulation, Connector, SpikeDeviceGroup, Synapse
 from persistence import opath
 
 
-from differential_equations.neuron_equations import eqs_P, PreEq_AMPA
-from differential_equations.neuron_parameters import delay_AMPA
+from differential_equations.eif_equations import (
+    eq_eif_E,
+    eq_eif_I,
+    pre_eif_E,
+    pre_eif_I,
+    pre_eif_Pois,
+)
 
+from differential_equations.eif_parameters import (
+    C_E,
+    C_I,
+    gL_E,
+    gL_I,
+    eL_E,
+    eL_I,
+    deltaT,
+    VT,
+    V_thr,
+    V_r,
+    gsynE_E,
+    gsynI_E,
+    gsynE_I,
+    gsynI_I,
+    esynE,
+    esynI,
+    rise_AMPA,
+    rise_GABA,
+    refractory_E,
+    refractory_I,
+    decay_AMPA,
+    decay_GABA,
+    latency_AMPA,
+    latency_GABA,
+    psx_AMPA,
+    psx_GABA,
+    psx_AMPA_ext,
+    alpha,
+)
 
 class TestStaticMethodBrianExperimentDestructurePersist(TestCase):
     def test_when_providing_data_dictionary_should_persist_to_file(self):
@@ -164,20 +199,29 @@ class TestClassBrianExperiment(TestCase):
 
         with BrianExperiment(persist=True, path="file.h5") as exp:
             # threhsolder is what creates the spikes
+
+
             E = NeuronPopulation(
-                4, eqs_P, threshold="v_s>-30*mV", refractory=1.3 * ms, method="rk4"
+                4,
+                eq_eif_E,
+                threshold="V>V_thr",
+                reset="V = V_r",
+                refractory=refractory_E,
+                method="rk2",
             )
 
-            connect = Connector()
+
+            connect = Connector(synapse_type="static")
             syn_ee = connect(
                 E,
                 E,
                 E.ids,
                 E.ids,
                 connect=("bernoulli", {"p": 0.5}),
-                on_pre=PreEq_AMPA,
-                delay=delay_AMPA,
+                on_pre=pre_eif_E,
+                delay=latency_AMPA,
             )
+
             syn_ee.monitor(syn_ee.synapses, variables=["x_AMPA"])
 
             exp.run(5 * ms)
@@ -274,12 +318,20 @@ class TestClassBrianExperiment(TestCase):
         self,
     ):
         with BrianExperiment() as exp:
+
             E = NeuronPopulation(
-                5, eqs_P, threshold="v_s>-30*mV", refractory=1.3 * ms, method="rk4"
+                5,
+                eq_eif_E,
+                threshold="V>V_thr",
+                reset="V = V_r",
+                refractory=refractory_E,
+                method="rk2",
             )
+
             E.monitor_rate()
-            E.monitor(E.ids, ["v_s"])
+            E.monitor(E.ids, ["V"])
             E.monitor_spike(E.ids)
+
 
             connect = Connector(synapse_type="static")
             syn_pp = connect(
@@ -288,8 +340,8 @@ class TestClassBrianExperiment(TestCase):
                 E.ids,
                 E.ids,
                 connect=("bernoulli", {"p": 0.5}),
-                on_pre=PreEq_AMPA,
-                delay=delay_AMPA,
+                on_pre=pre_eif_E,
+                delay=latency_AMPA,
             )
             syn_pp.monitor(syn_pp.synapses, ["x_AMPA"])
 
@@ -318,7 +370,7 @@ class TestClassBrianExperiment(TestCase):
 
             # create should
             clean_ns = lambda d: {k: v for k, v in d.items() if not k.startswith("__")}
-            import differential_equations.neuron_parameters as neuron_parameters
+            import differential_equations.eif_parameters as neuron_parameters
 
             namespace_should = clean_ns(neuron_parameters.__dict__)
             namespace_should.update(clean_ns(globals()))

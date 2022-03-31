@@ -21,10 +21,13 @@ from network import (
     PoissonBlockedStimulus,
     PoissonDeviceGroup,
 )
-from differential_equations.neuron_equations import PreEq_AMPA
-from differential_equations.neuron_parameters import delay_AMPA
+
 from utils import Brian2UnitError
 from distribution import draw_normal
+
+
+
+
 
 
 class TestNeuronPopulation(TestCase):
@@ -319,14 +322,14 @@ class TestPoissonDeviceGroup(TestCase):
     def test_when_poisson_time_variant_rate_set_should_evoke_spikes_proportional_to_the_integral(
         self,
     ):
-        # we are making use of angular_frequency = 2 * pi / 1 s -> Integral_0s^1s == offset * 1s * khz
+        # we are making use of angularfrequency = 2 * pi / 1 s -> Integral_0s^1s == offset * 1s * khz
         # integral of the cosinus component over 2*pi = 0
         with BrianExperiment(dt=0.5 * ms) as exp:
 
             offset = 1.0
             time_elapsed = 1000.0 * ms
             rate = PoissonDeviceGroup.create_time_variant_rate(
-                offset=offset, amplitude=1.0, angular_frequency=2 * np.pi * Hz
+                offset=offset, amplitude=1.0, angularfrequency=2 * np.pi 
             )
             P = PoissonDeviceGroup(1, rate=rate)
             P.monitor_spike(P.ids)
@@ -355,7 +358,7 @@ class TestPoissonBlockedStimulus(TestCase):
             )
             one_rate = 100.0
             zero_rate = 1.0
-            block_interval = (1, 3)
+            block_interval = [(1, 3)]
 
             P = PoissonBlockedStimulus(
                 size=size,
@@ -400,7 +403,7 @@ class TestPoissonBlockedStimulus(TestCase):
             )
             one_rate = 100.0
             zero_rate = 1.0
-            block_interval = (1, 3)
+            block_interval = [(1, 3)]
 
             P = PoissonBlockedStimulus(
                 size=size,
@@ -438,7 +441,9 @@ class TestPoissonBlockedStimulus(TestCase):
             v2 = PP._pop.namespace["stim"].values.reshape(num_time_blocks, size)
 
             self.assertTrue(
-                np.all(v[slice(*block_interval, 1)] != v2[slice(*block_interval, 1)])
+                np.all(
+                    v[slice(*block_interval[0], 1)] != v2[slice(*block_interval[0], 1)]
+                )
             )
 
     def test_when_initializing_should_create_a_spike_device_population_with_rates_specified_by_pattern_and_one_rate_and_zero_rate(
@@ -455,7 +460,7 @@ class TestPoissonBlockedStimulus(TestCase):
             # raise ValueError(pattern.shape)
             one_rate = 200.0
             zero_rate = 100.0
-            block_interval = (1, 3)
+            block_interval = [(1, 3)]
 
             P = PoissonBlockedStimulus(
                 size=size,
@@ -530,11 +535,11 @@ class TestPoissonBlockedStimulus(TestCase):
 
             # should_rate
             time_block_idx = np.arange(num_time_blocks)
-            within_tb_idx = time_block_idx[slice(*block_interval, 1)]
+            within_tb_idx = time_block_idx[slice(*block_interval[0], 1)]
             outside_tb_idx = np.hstack(
                 (
-                    time_block_idx[slice(0, block_interval[0], 1)],
-                    time_block_idx[slice(block_interval[1], num_time_blocks, 1)],
+                    time_block_idx[slice(0, block_interval[0][0], 1)],
+                    time_block_idx[slice(block_interval[0][1], num_time_blocks, 1)],
                 )
             )
 
@@ -614,7 +619,7 @@ class TestPoissonBlockedStimulus(TestCase):
         )
         one_rate = 10.0 * Hz
         zero_rate = 1.0 * Hz
-        block_interval = (1, 3)
+        block_interval = [(1, 3)]
 
         stimulus = PoissonBlockedStimulus.create_blocked_rate(
             size=size,
@@ -633,24 +638,32 @@ class TestPoissonBlockedStimulus(TestCase):
 
         # in time interval
         self.assertTrue(
-            np.all(
-                np.asarray(
-                    [stimulus[t] for t in time_block_idx[slice(*block_interval, 1)]]
-                )
-                != 0.0
+            all(
+                [
+                    np.all(
+                        np.asarray([stimulus[t] for t in time_block_idx[slice(*bt, 1)]])
+                        != 0.0
+                    )
+                    for bt in block_interval
+                ]
             )
         )
         # outside of time interval
         self.assertTrue(
-            np.all(
-                np.asarray(
-                    [
-                        stimulus[t]
-                        for t in time_block_idx[slice(0, block_interval[0], 1)]
-                        + time_block_idx[slice(block_interval[1], num_time_blocks, 1)]
-                    ]
-                )
-                == 0.0
+            all(
+                [
+                    np.all(
+                        np.asarray(
+                            [
+                                stimulus[t]
+                                for t in time_block_idx[slice(0, bt[0], 1)]
+                                + time_block_idx[slice(bt[1], num_time_blocks, 1)]
+                            ]
+                        )
+                        == 0.0
+                    )
+                    for bt in block_interval
+                ]
             )
         )
 
@@ -665,7 +678,7 @@ class TestPoissonBlockedStimulus(TestCase):
         )
         one_rate = 10.0
         zero_rate = 1.0
-        block_interval = (1, 3)
+        block_interval = [(1, 3)]
 
         stimulus = PoissonBlockedStimulus.create_blocked_rate(
             size=size,
@@ -684,26 +697,36 @@ class TestPoissonBlockedStimulus(TestCase):
 
         # in time interval and one_devices
         self.assertTrue(
-            np.all(
-                np.asarray(
-                    [
-                        stimulus[t, pattern]
-                        for t in time_block_idx[slice(*block_interval, 1)]
-                    ]
-                )
-                == one_rate
+            all(
+                [
+                    np.all(
+                        np.asarray(
+                            [
+                                stimulus[t, pattern]
+                                for t in time_block_idx[slice(*bt, 1)]
+                            ]
+                        )
+                        == one_rate
+                    )
+                    for bt in block_interval
+                ]
             )
         )
         # in time interval and zero_devices
         self.assertTrue(
-            np.all(
-                np.asarray(
-                    [
-                        stimulus[t, pattern == False]
-                        for t in time_block_idx[slice(*block_interval, 1)]
-                    ]
-                )
-                == zero_rate
+            all(
+                [
+                    np.all(
+                        np.asarray(
+                            [
+                                stimulus[t, pattern == False]
+                                for t in time_block_idx[slice(*bt, 1)]
+                            ]
+                        )
+                        == zero_rate
+                    )
+                    for bt in block_interval
+                ]
             )
         )
 

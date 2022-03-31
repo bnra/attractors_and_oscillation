@@ -1,580 +1,71 @@
-from typing import Any, Dict, Callable, Tuple, Union, List
-import numpy as np
-from parso import parse
-import scipy.signal
-import spectrum
-import tqdm
-import copy
+from typing import Dict, Tuple, Union
 
-import persistence
+import scipy.signal as sgnl
+import numpy as np
+import spectrum
 from utils import (
-    compute_time_interval,
     values_in_interval,
     next_power_of_two,
-    restrict_to_interval,
 )
-import analysis_utils
-import parse_equations
 
 
-class ExperimentAnalysis:
+def compute_stimulus_characteristics(stimulus_block_interval: np.ndarray):
+
+    stimulus_onset = stimulus_block_interval[:, 0]
+    stimulus_end = stimulus_block_interval[:, 1]
+
+    if not np.all(
+        (stimulus_end - stimulus_onset) - (stimulus_end[0] - stimulus_onset[0]) < 1e-5
+    ):
+        raise ValueError("no constant stimulus length - this is not supported.")
+    stimulus_length = (stimulus_end - stimulus_onset)[0]
+
+    # note that the below check guarantees the inter_end_interval is constant across instances of stimulus_ends as well
+    # - since stimulus_length is constant
+    if stimulus_onset.size < 2 or not np.allclose(
+        stimulus_onset[1:] - stimulus_onset[0:-1],
+        stimulus_onset[1] - stimulus_onset[0],
+    ):
+        raise ValueError(
+            "a constant stimulus_onset_interval between onsets of the stimulus and"
+            + " at least two stimulus presentations are requried. "
+            + f"Length of stimulus_presentations {stimulus_onset.size} and stimulus_onset_intervals {stimulus_onset[1:] - stimulus_onset[0:-1]}."
+        )
+    # note that stimulus_onset[1] - stimulus_onset[0] = stimulus_end[1] - stimulus_end[0]
+    inter_presentation_interval = stimulus_onset[1] - stimulus_onset[0]
+    return stimulus_onset, stimulus_end, stimulus_length, inter_presentation_interval
+
+
+def detect_peaks(signal: np.ndarray, dt: float):
     """
-    Analyse data from :class:`BrianExperiment.BrianExperiment`
-
-    Example for analyzing data by all analysis methods
-
-    .. testsetup::
-
-        import numpy as np
-        from BrianExperiment import BrianExperiment
-        from analysis import ExperimentAnalysis
-        from persistence import FileMap
-        from utils import TestEnv
-
-    .. testcode::
-
-        with TestEnv():
-            for run in range(2):
-                with BrianExperiment(persist=True, path="file.h5", object_path=f"/run_{run}/data") as exp:
-                    exp.persist_data["mon"] = np.arange(10)
-            with FileMap("file_analysis.h5") as af:
-                with FileMap("file.h5") as f:
-                    for run in f.keys():
-                        exp_analysis = ExperimentAnalysis(experiment_data=f[run]["data"])
-                        exp_analysis.analyze_all()
-                        af[run] = exp_analysis.report()
-
-                print({run:list(af[run].keys()) for run in af.keys()})
-
-
-    .. testoutput::
-
-        { "run_1" : ["x", "y", "z"], "run_2" : ["x", "y", "z"] }
-
-
-    Example for analyzing data by specific analysis methods
-
-    .. testsetup::
-
-        import numpy as np
-        from BrianExperiment import BrianExperiment
-        from analysis import ExperimentAnalysis
-        from persistence import FileMap
-        from utils import TestEnv
-
-    .. testcode::
-
-        with TestEnv():
-            for run in range(2):
-                with BrianExperiment(persist=True, path="file.h5", object_path=f"/run_{run}/data") as exp:
-                    exp.persist_data["mon"] = np.arange(10)
-            with FileMap("file_analysis.h5") as af:
-                with FileMap("file.h5") as f:
-                    for run in f.keys():
-                        exp_analysis = ExperimentAnalysis(experiment_data=f[run]["data"])
-                        exp_analysis.analyze_instantaneous_rate()
-                        af[run] = exp_analysis.report()
-
-                print({run:list(af[run].keys()) for run in af.keys()})
-
-
-    .. testoutput::
-
-        { "run_1" : ["instantaneous_rate"], "run_2" : ["instantaneous_rate"] }
+    detect peaks of a signal given sampling interval dt with a minimum distance between peaks
+    of half the wavelength of the fundamental frequency of the signal
     """
+    # determine max freq
+    nfft = 2 ** next_power_of_two(signal.size)
+    freq, Sk, weights, _ = mt_spectrum(signal, dt, nfft=nfft)
 
-    def __init__(
-        self,
-        experiment_data: Union[Dict, persistence.Reader],
-        t_start: float = 10.0,
-        t_end: float = None,
-    ):
-        """
+    # print(pop_rate.shape, freq_peak.shape, Sk_peak.shape)
 
-        :param t_start: if set consider only data produced from (incl.) this time point
-        :param t_end: if set consider only data produced until (incl.) this time point
+    Sk = Sk[:, : nfft // 2]
 
-        all analyses will be done  only on data within the interval [t_start, t_end]
-        """
+    # print(freq_peak.shape, Sk_peak.shape)
 
-        self._data = experiment_data
-        self._analysis = {
-            cat: {instance: {} for instance in self._data[cat].keys()}
-            for cat in self._data.keys()
-        }
+    idx = np.logical_and(freq >= 50.0, freq <= 300.0)
+    freq, Sk = freq[idx], Sk[:, idx]
 
-        self.dt = experiment_data["meta"]["dt"]["value"] * 1000
-        t = experiment_data["meta"]["t"]["value"] * 1000
+    # get argmax of power spectral density
+    skc = np.abs(Sk) ** 2
+    skc = np.mean(skc * weights, axis=0) / signal.size
 
-        self.t_start, self.t_end, _ = compute_time_interval(t, self.dt, t_start, t_end)
-        self._analysis["meta"] = {
-            "t_start": {"value": self.t_start / 1000, "unit": "s"},
-            "t_end": {"value": self.t_end / 1000, "unit": "s"},
-            "dt": {"value": self.dt / 1000, "unit": "s"},
-        }
+    f_sync_idx = np.argmax(skc)
+    f_sync = freq[f_sync_idx]
 
-    @property
-    def report(self):
-        return self._analysis
-
-    def analyze_all(self):
-        analysis_functions = [
-            getattr(self, f_name)
-            for f_name in dir(self)
-            if isinstance(getattr(self, f_name), Callable)
-            and f_name.startswith("analyze_")
-            and f_name != "analyze_all"
-        ]
-        for f in analysis_functions:
-            f()
-
-    def analyze_instantaneous_rate(self, pop_name: List[str] = None):
-        """
-        compute the instantaneous rate for populations
-
-        :param pop_name: populations for which the instantaneous rate is computed
-                         - df: None ~ all populations
-        """
-        pop_name = (
-            list(self._data["SpikeDeviceGroup"].keys())
-            if pop_name == None
-            else pop_name
-        )
-        for pn in pop_name:
-            # print(pn, self._data["SpikeDeviceGroup"][pn].keys())
-            if (
-                self._data["SpikeDeviceGroup"][pn]["device"]["class"]
-                == "NeuronPopulation"
-            ):
-
-                spike_train = {
-                    neuron: train * 1000
-                    for neuron, train in self._data["SpikeDeviceGroup"][pn]["spike"][
-                        "spike_train"
-                    ]["value"].items()
-                }
-
-                inst_rate = instantaneous_rate_from_spike_train(
-                    self._data["meta"]["t"]["value"] * 1000,
-                    self._data["meta"]["dt"]["value"] * 1000,
-                    spike_train,
-                )
-                inst_rate, _, _ = restrict_to_interval(
-                    inst_rate, self.dt, self.t_start, self.t_end
-                )
-
-                self._analysis["SpikeDeviceGroup"][pn]["instantaneous_rate"] = {
-                    "value": inst_rate,
-                    "unit": "Hz",
-                }
-
-    def analyze_smoothed_rate(self, mode: str = "gaussian", window_size: float = 1.0):
-        """
-        compute the smoothed rate for populations analyzed in :meth:`ExperimentAnalysis.analyze_instantaneous_rate`
-
-        :param mode: mode used for smoothing the instantaneous rate
-        :param window_size: window size tb used for smoothing in [ms]
-        """
-        if mode not in ["gaussian"]:
-            raise ValueError(f"param mode must be one of ['gaussian']. Is {mode}")
-
-        for pn in self._analysis["SpikeDeviceGroup"].keys():
-            if (
-                not "smoothed_rate" in self._analysis["SpikeDeviceGroup"][pn].keys()
-                and self._data["SpikeDeviceGroup"][pn]["device"]["class"]
-                == "NeuronPopulation"
-            ):
-                if mode == "gaussian":
-                    val = gaussian_smoothing(
-                        self._analysis["SpikeDeviceGroup"][pn]["instantaneous_rate"][
-                            "value"
-                        ],
-                        window_size=4.0,
-                        one_sigma_window=1.0,
-                        dt=self._data["meta"]["dt"]["value"] * 1000,
-                    )
-                # furhter windows elif ....
-
-                # note that all data was produced in [t_start, t_end] as this measure depends only on instantaneous_rate
-                self._analysis["SpikeDeviceGroup"][pn]["smoothed_rate"] = {
-                    "value": val,
-                    "mode": mode,
-                    "unit": "Hz",
-                }
-
-    def analyze_power_spectral_density(
-        self,
-        pop_name: List[str] = None,
-        separate_intervals: bool = False,
-        f_lower_bound: float = 50.0,
-        f_upper_bound: float = 300.0,
-    ):
-        """
-        compute power spectral density
-        - computes psd over the entire signal if separate_intervals set also computes psd in separate time intervals
-
-        :param pop_name: list of populations to compute psd for - defaults to all NeuronPopulations
-        :param separate_intervals: also compute psd for separate time intervals (using sliding window)
-        :param f_lower_bound: does not consider frequencies (and resp. psd) below lower bound
-        :param f_upper_bound: does not consider frequencies (and resp. psd) above upper bound
-        """
-        # time resolution of instantaneous rate is simulation time step as it is manually computed from spike trains
-        dt = self.dt
-
-        pop_name = (
-            list(self._data["SpikeDeviceGroup"].keys())
-            if pop_name == None
-            else pop_name
-        )
-
-        for pn in pop_name:
-            if (
-                self._data["SpikeDeviceGroup"][pn]["device"]["class"]
-                == "NeuronPopulation"
-            ):
-                # note that all data was produced in [t_start, t_end] as this measure depends only on instantaneous_rate
-                inst_rate = self._analysis["SpikeDeviceGroup"][pn][
-                    "instantaneous_rate"
-                ]["value"]
-
-                # # t_start and t_end are now set such that inst_rate contains all samples within [t_start, t_end] (closed bounds)
-                # inst_rate, t_start, t_end = restrict_to_interval(
-                #     inst_rate, dt, t_start, t_end
-                # )
-
-                freq, psd = multitaper_power_spectral_density(inst_rate, dt)
-
-                freq, psd = restrict_frequency(
-                    freq, psd, f_lower_bound=f_lower_bound, f_upper_bound=f_upper_bound
-                )
-
-                self._analysis["SpikeDeviceGroup"][pn]["psd_complete"] = {
-                    "psd": psd,
-                    "frequency": {"value": freq, "unit": "Hz"},
-                    # "t_start": {"value": t_start / 1000, "unit": "s"},
-                    # "t_end": {"value": t_end / 1000, "unit": "s"},
-                }
-
-                if separate_intervals:
-                    w_sliding = 2 ** 13
-                    # setting nfft in this manner increases resolution and leads to minor speed up even though
-                    # (resolution/ # discrete points computed is larger)
-                    freq, psd = multitaper_power_spectral_density(
-                        inst_rate, dt, w_sliding=w_sliding, nfft=w_sliding * 2
-                    )
-                    freq, psd = restrict_frequency(
-                        freq,
-                        psd,
-                        f_lower_bound=f_lower_bound,
-                        f_upper_bound=f_upper_bound,
-                    )
-
-                    self._analysis["SpikeDeviceGroup"][pn]["psd_interval"] = {
-                        "psd": psd,
-                        "frequency": {"value": freq, "unit": "Hz"},
-                        # "t_start": {"value": t_start / 1000, "unit": "s"},
-                        # "t_end": {"value": t_end / 1000, "unit": "s"},
-                    }
-
-    def analyze_peaks(
-        self, pop_name: List[str] = None, delta: float = 1.0, smoothed: bool = True
-    ):
-        """
-        analyze the peaks (& troughs) of  the population rate of neuron populations to a threshold delta using a time-wise symmetric OR rule
-        :param pop_name: population names for which peaks are tb detected
-        :param delta: threshold to which peaks are detected
-        :param smoothed: whether to analyze the smoothed or instantaneous population rate
-        """
-
-        pop_name = (
-            list(self._data["SpikeDeviceGroup"].keys())
-            if pop_name == None
-            else pop_name
-        )
-
-        for pn in pop_name:
-            if (
-                self._data["SpikeDeviceGroup"][pn]["device"]["class"]
-                == "NeuronPopulation"
-                and pn in self._analysis["SpikeDeviceGroup"]
-            ):
-                if smoothed:
-                    pop_rate = self._analysis["SpikeDeviceGroup"][pn]["smoothed_rate"][
-                        "value"
-                    ]
-                else:
-                    pop_rate = self._analysis["SpikeDeviceGroup"][pn][
-                        "instantaneous_rate"
-                    ]["value"]
-
-                mins, maxs = analysis_utils.detect_symmetric_peaks(pop_rate, delta)
-
-                self._analysis["SpikeDeviceGroup"][pn]["peaks"] = {
-                    "mins": mins,
-                    "maxs": maxs,
-                    "delta": delta,
-                    "smoothed": smoothed,
-                }
-
-    def analyze_cell_rate(self, pop_name: List[str] = None):
-        """
-        cell rate per cell, the population average and the population maximum for populations
-
-        :param pop_name: populations for which the instantaneous rate is computed
-                         - df: None ~ all populations
-        """
-        pop_name = (
-            list(self._data["SpikeDeviceGroup"].keys())
-            if pop_name == None
-            else pop_name
-        )
-        for pn in pop_name:
-            if (
-                self._data["SpikeDeviceGroup"][pn]["device"]["class"]
-                == "NeuronPopulation"
-            ):
-
-                spike_train = {
-                    neuron: train * 1000
-                    for neuron, train in self._data["SpikeDeviceGroup"][pn]["spike"][
-                        "spike_train"
-                    ]["value"].items()
-                }
-
-                ids = self._data["SpikeDeviceGroup"][pn]["ids"]
-
-                ids, cell_rate = cell_rate_from_spike_train(
-                    self.t_start,
-                    self.t_end,
-                    ids,
-                    spike_train,
-                )
-
-                self._analysis["SpikeDeviceGroup"][pn]["cell_rate"] = {
-                    "ids": ids,
-                    "cell_rate": {"value": cell_rate, "unit": "Hz"},
-                    "pop_avg_cell_rate": {"value": np.mean(cell_rate), "unit": "Hz"},
-                    "pop_max_cell_rate": {"value": np.max(cell_rate), "unit": "Hz"},
-                }
-
-    def analyze_snr(self, bin_size=10.0):
-        """
-        signal-to-noise ratio for populations analyzed in :meth:`ExperimentAnalysis.analyze_power_spectral_density`
-        """
-        for pn in self._analysis["SpikeDeviceGroup"].keys():
-            if (
-                not "psd_complete" in self._analysis["SpikeDeviceGroup"][pn].keys()
-                and self._data["SpikeDeviceGroup"][pn]["device"]["class"]
-                == "NeuronPopulation"
-            ):
-                psd = self._analysis["SpikeDeviceGroup"][pn]["psd_complete"]["psd"]
-                freq = self._analysis["SpikeDeviceGroup"][pn]["psd_complete"][
-                    "frequency"
-                ]["value"]
-
-                snr = snr(psd, freq, bin_size)
-
-                self._analysis["SpikeDeviceGroup"][pn]["snr"] = {
-                    "snr": snr,
-                    "bin_size": bin_size,
-                }
-
-    def analyze_synchronization_frequency(self):
-        """
-        synchronization_frequency for populations analyzed in :meth:`ExperimentAnalysis.analyze_power_spectral_density`
-        """
-        for pn in self._analysis["SpikeDeviceGroup"].keys():
-            if (
-                not "psd_complete" in self._analysis["SpikeDeviceGroup"][pn].keys()
-                and self._data["SpikeDeviceGroup"][pn]["device"]["class"]
-                == "NeuronPopulation"
-            ):
-                psd = self._analysis["SpikeDeviceGroup"][pn]["psd_complete"]["psd"]
-                freq = self._analysis["SpikeDeviceGroup"][pn]["psd_complete"][
-                    "frequency"
-                ]["value"]
-
-                f, p = synchronization_frequency(psd, freq)
-
-                self._analysis["SpikeDeviceGroup"][pn]["synchronization_frequency"] = {
-                    "frequency": {"value": f, "unit": "Hz"},
-                    "power": p,
-                }
-
-    def analyze_avg_power(self):
-        """
-        average power for populations analyzed in :meth:`ExperimentAnalysis.analyze_power_spectral_density`
-        """
-        for pn in self._analysis["SpikeDeviceGroup"].keys():
-            if (
-                not "psd_complete" in self._analysis["SpikeDeviceGroup"][pn].keys()
-                and self._data["SpikeDeviceGroup"][pn]["device"]["class"]
-                == "NeuronPopulation"
-            ):
-                psd = self._analysis["SpikeDeviceGroup"][pn]["psd_complete"]["psd"]
-
-                avg_pwr = np.mean(psd)
-
-                self._analysis["SpikeDeviceGroup"][pn]["avg_power"] = avg_pwr
-
-    def analyze_total_synaptic_conductance(
-        self,
-        pop_e: str,
-        pop_i: str,
-        synaptic_input_e_e_name: str = "x_AMPA",
-        synaptic_input_i_e_name: str = "x_GABA",
-        conductance_e_e_name: str = "gAMPA_p",
-        conductance_i_e_name: str = "gGABA_p",
-    ):
-        """
-        total synaptic conductance for populations pop_e assumes synaptic connectivity to pop_e
-        is limited to pop_e -> pop_e and pop_i -> pop_e
-
-        :param pop_e: excitatory population for which total synaptic conductance is computed
-        :param pop_i: inhibitory population which connects to pop_e
-        :return: total conductance and respective ids of pop_e
-        """
-        synapse_e_e = [
-            k
-            for k, v in self._data["Synapse"].items()
-            if v["source"]["name"] == pop_e and v["target"]["name"] == pop_e
-        ]
-        synapse_i_e = [
-            k
-            for k, v in self._data["Synapse"].items()
-            if v["source"]["name"] == pop_i and v["target"]["name"] == pop_e
-        ]
-        if not (
-            pop_e in self._data["SpikeDeviceGroup"].keys()
-            and pop_i in self._data["SpikeDeviceGroup"].keys()
-        ):
-            raise ValueError("No such populations pop_e or pop_i.")
-        if not (
-            "cell_rate" in self._analysis["SpikeDeviceGroup"][pop_e]
-            and "cell_rate" in self._analysis["SpikeDeviceGroup"][pop_i]
-        ):
-            raise ValueError(
-                f"cell rate must be analyzed for pop {pop_e} and pop {pop_i} prior to calling this method"
-            )
-        if not (len(synapse_e_e) > 0 and len(synapse_i_e) > 0):
-            raise ValueError(
-                f"No synapses matching {pop_e} or {pop_i} found - both synapses E->E and E->I must be present."
-            )
-        else:
-            synapse_e_e = synapse_e_e[0]
-            synapse_i_e = synapse_i_e[0]
-
-        if (
-            "on_pre" not in self._data["Synapse"][synapse_e_e]["synapse_params"].keys()
-            or "on_pre"
-            not in self._data["Synapse"][synapse_i_e]["synapse_params"].keys()
-        ):
-            raise ValueError(
-                "on_pre not in synapse_params for {synapse_e_e}, {synapse_i_e} - "
-                + "total conductance cannot be analyzed without on_pre being set on the respective synapses for simulation."
-            )
-
-        e_pop_ids = self._data["SpikeDeviceGroup"][pop_e]["ids"]
-
-        source_ids_e_e = self._data["Synapse"][synapse_e_e]["source"]["ids"]
-        target_ids_e_e = self._data["Synapse"][synapse_e_e]["target"]["ids"]
-
-        source_ids_i_e = self._data["Synapse"][synapse_i_e]["source"]["ids"]
-        target_ids_i_e = self._data["Synapse"][synapse_i_e]["target"]["ids"]
-
-        cell_rate_e = self._analysis["SpikeDeviceGroup"][pop_e]["cell_rate"][
-            "cell_rate"
-        ]["value"]
-        cell_rate_i = self._analysis["SpikeDeviceGroup"][pop_i]["cell_rate"][
-            "cell_rate"
-        ]["value"]
-
-        # parameters
-        parameters = self._data["meta"]["neuron_parameters"].load()
-
-        # parameters e_e
-        conductance_e_e = parameters[conductance_e_e_name]["value"]
-
-        synapse_params_e_e = self._data["Synapse"][synapse_e_e]["synapse_params"].load()
-        on_pre_e_e = self._data["Synapse"][synapse_e_e]["synapse_params"]["on_pre"]
-
-        neuron_variables_e_e = parse_equations.extract_variables_from_equations(
-            on_pre_e_e
-        )
-
-        for k, v in neuron_variables_e_e.items():
-            synapse_params_e_e[k] = v["neutral_element"]
-
-        parameters_e_e = copy.deepcopy(parameters)
-        parameters_e_e.update(synapse_params_e_e)
-
-        # parameters i_e
-        conductance_i_e = parameters[conductance_i_e_name]["value"]
-
-        synapse_params_i_e = self._data["Synapse"][synapse_i_e]["synapse_params"].load()
-        on_pre_i_e = self._data["Synapse"][synapse_i_e]["synapse_params"]["on_pre"]
-
-        neuron_variables_i_e = parse_equations.extract_variables_from_equations(
-            on_pre_i_e
-        )
-
-        for k, v in neuron_variables_i_e.items():
-            synapse_params_i_e[k] = v["neutral_element"]
-
-        parameters_i_e = parameters
-        parameters_i_e.update(synapse_params_i_e)
-
-        # compute total conductance e_e
-        eval_on_pre_e_e = parse_equations.evaluate_equations(on_pre_e_e, parameters_e_e)
-
-        syn_input_e_e = eval_on_pre_e_e[synaptic_input_e_e_name]
-
-        (
-            targets_e_e,
-            sources_per_target_e_e,
-            synaptic_input_e_e,
-        ) = compute_synaptic_input(source_ids_e_e, target_ids_e_e, syn_input_e_e)
-
-        target_ids_e_e, total_conductance_e_e = effective_total_synaptic_conductance(
-            targets_e_e,
-            sources_per_target_e_e,
-            cell_rate_e,
-            synaptic_input_e_e,
-            conductance_e_e,
-        )
-
-        # compute total conductance i_e
-        eval_on_pre_i_e = parse_equations.evaluate_equations(on_pre_i_e, parameters_i_e)
-
-        syn_input_i_e = eval_on_pre_i_e[synaptic_input_i_e_name]
-
-        (
-            targets_i_e,
-            sources_per_target_i_e,
-            synaptic_input_i_e,
-        ) = compute_synaptic_input(source_ids_i_e, target_ids_i_e, syn_input_i_e)
-
-        target_ids_i_e, total_conductance_i_e = effective_total_synaptic_conductance(
-            targets_i_e,
-            sources_per_target_i_e,
-            cell_rate_i,
-            synaptic_input_i_e,
-            conductance_i_e,
-        )
-
-        # assumes ids start at 0 and progressively increment
-        # inputs from pop_e and pop_i are opposed
-        # (a -> b ~ a dependes on b:)
-        #  dv_d/dt -> I_ds -> (v_d-v_s),
-        #  v_s -> IsynI -> x_GABA
-        #  dv_dt -> IsynP -> synP -> x_AMPA
-        total_conductance = np.zeros_like(e_pop_ids, dtype=float)
-        total_conductance[target_ids_i_e] -= total_conductance_i_e
-        total_conductance[target_ids_e_e] += total_conductance_e_e
-
-        self._analysis["SpikeDeviceGroup"][pop_e][
-            "total_conductance"
-        ] = total_conductance
+    wave_length = 1 / f_sync * 1000
+    sample_distance = int((wave_length / 2) // dt)
+    # print(f_sync, wave_length, sample_distance, pop_rate.size)
+    peak_idx, _ = sgnl.find_peaks(signal, distance=sample_distance)
+    return peak_idx
 
 
 def gaussian_smoothing(
@@ -617,17 +108,17 @@ def instantaneous_rate_from_spike_train(
 
     :return: instantaneous firing rate - population average rate for each time step
     """
+
     spike_events = list(spike_train.values())
     spikes = np.hstack(spike_events) if len(spike_events) > 0 else np.array([])
-    vals, counts = np.unique(spikes, return_counts=True)
+    # time bin spikes
+    idx = np.asarray(np.round(spikes / dt), dtype=int)
+    idx, counts = np.unique(idx, return_counts=True)
 
     rate = np.zeros(values_in_interval(0.0, t, dt))
 
-    idx = np.asarray(np.round(vals / dt), dtype=int)
-
     # as t,dt in ms rate * 1000/dt ~ Hz (where rate is rate at single step) ~ dt_s = dt / 1000, counts/pop_size / dt_s = counts/pop_size * (1000/dt)
     rate[idx] = counts / len(spike_train.keys()) * 1000 / dt
-
     return rate
 
 
@@ -664,17 +155,16 @@ def cell_rate_from_spike_train(
     return ids, cell_rates
 
 
-def mt_psd(rate: np.ndarray, dt: float, nfft: int = None):
+def mt_spectrum(rate: np.ndarray, dt: float, nfft: int = None):
     """
-    Power spectral density of the population rate computed with a multi taper method
+    spectrum of the population rate computed with a multi taper method
 
     :param rate: population rate
     :param dt: time step / interval of successive measures of the population rate
     :param nfft: length of the output of fft (n-point discrete, where n = nft)
                   - set only if you desire a specific nfft - defaults to 2 ** sp, where sp is smallest num for which rate.size <= 2 ** sp
-    :return: frequencies and the power spectral density (at the respective frequencies)
+    :return: frequencies, complex spectrum, weights, eigenvalues of multitaper method
     """
-
     # equivalent to internal impl (except for capping at 256) as int(np.ceil(np.log2(n))) == int(n-1).bit_length()
     # 2 ** n, where n is smallest power of 2 larger than x.size - fft works best when length is a power of 2
     if nfft == None:
@@ -694,6 +184,25 @@ def mt_psd(rate: np.ndarray, dt: float, nfft: int = None):
     Sk_complex, weights, eigenvalues = spectrum.pmtm(
         rate, NW=2.5, NFFT=nfft, method="eigen"
     )
+    return frequency, Sk_complex, weights, eigenvalues
+
+
+def mt_psd(rate: np.ndarray, dt: float, nfft: int = None):
+    """
+    Power spectral density of the population rate computed with a multi taper method
+
+    :param rate: population rate
+    :param dt: time step / interval of successive measures of the population rate
+    :param nfft: length of the output of fft (n-point discrete, where n = nft)
+                  - set only if you desire a specific nfft - defaults to 2 ** sp, where sp is smallest num for which rate.size <= 2 ** sp
+    :return: frequencies and the power spectral density (at the respective frequencies)
+    """
+    # equivalent to internal impl (except for capping at 256) as int(np.ceil(np.log2(n))) == int(n-1).bit_length()
+    # 2 ** n, where n is smallest power of 2 larger than x.size - fft works best when length is a power of 2
+    if nfft == None:
+        nfft = 2 ** next_power_of_two(rate.size)
+    # multi taper
+    frequency, Sk_complex, weights, _ = mt_spectrum(rate, dt, nfft)
 
     # compute the energy spectral density (from complex spectrum)
     Sk = abs(Sk_complex) ** 2
@@ -837,70 +346,114 @@ def restrict_frequency(
     return frequency[idx], psd[idx]
 
 
-def compute_synaptic_input(
-    source_ids: np.ndarray,
-    target_ids: np.ndarray,
-    synaptic_input: Union[np.ndarray, float],
-):
+def compute_synaptic_input(source_ids, target_ids, syn_const: Union[float, np.ndarray]):
     """
     synaptic input for each distinct id in source_ids by target_id
 
     :param source_ids: ids representing the source of synaptic connections - each id represents the source neuron of a synapse
     :param target_ids: ids representing the target of synaptic connections - each id represents the target neuron of a synapse
-    :param synaptic input: synaptic input by which a variable in the target neuron is modified on spike of source neuron
-                            - can be a constant or an array of same size as source_ids and target_ids
+    :param syn_const: synaptic input constant, input to the target neuron when the source neuron spikes - either a scalar value (same for all synapses) or one value per synaptic connection
     """
+    unique_targets = np.sort(np.unique(target_ids))
+    # indices in ascending order
+    unique_sources = np.sort(np.unique(source_ids))
 
-    # significant speed up possible using sparse matrix format instead of dicts
-    unique_targets = np.unique(target_ids)
+    # Targets x Sources - row represents all synaptic inputs from all sources to a target
+    synaptic_input = np.zeros((unique_targets.size, unique_sources.size), dtype=float)
 
-    if isinstance(synaptic_input, np.ndarray) and synaptic_input.size > 1:
-        # sanity check
-        if not (
-            synaptic_input.size == source_ids.size
-            and source_ids.size == target_ids.size
-        ):
-            raise ValueError(
-                "size of synaptic_input does not match connectivity matrix"
-            )
+    # broadcasts if syn_const is scalar
+    synaptic_input[target_ids, source_ids] = syn_const
 
-        indices = {tg: np.where(target_ids == tg) for tg in unique_targets}
-        sources = {}
-        input = {}
-        for tg in unique_targets:
-            sources[tg] = source_ids[indices[tg]]
-            # print(synaptic_input, indices[tg], tg)
-            input[tg] = synaptic_input[indices[tg]]
-
-    else:
-        sources = {tg: source_ids[np.where(target_ids == tg)] for tg in unique_targets}
-        input = np.ones_like(unique_targets, dtype=float) * synaptic_input
-    return unique_targets, sources, input
+    return unique_targets, unique_sources, synaptic_input
 
 
-def effective_total_synaptic_conductance(
+def synaptic_conductance(
     target_ids: np.ndarray,
-    source_by_target: Dict[int, np.ndarray],
+    source_ids: np.ndarray,
     cell_rate: np.ndarray,
-    synaptic_input: Dict[int, np.ndarray],
+    synaptic_input: np.ndarray,
     conductance: float,
 ):
     """
-    effective total synaptic conductance for a group of synapses on a per target neuron basis
+    total synaptic conductance for a specific synaptic input type for a group of synapses on a per target neuron basis
 
-    :param target_ids: target ids for which the total conductance is computed
-    :param source_by_target: source ids by the respective target neuron
+    :param target_ids: target ids for which the total conductance is computed (unique targets) sorted in ascending order
+    :param source_ids: source ids (unique sources) sorted in ascending order
     :param cell_rate: cell rate of the source population
-    :param synaptic_input: synaptic input per source neuron by respective target neuron
-            (input by which variables in the target neuron are modified for a spike of the source neuron)
-    :param indegree: indegree of the respective target neurons (per neuon)
-    :param conductance: target_ids and corresponding total conductance (for this synapse group)
+    :param synaptic_input: synaptic input per target and source neuron (targets x source)
+    :param conductance: conductance of the respective synaptic input type
+    :return: target_ids and corresponding total conductance of the respective synaptic input (for this synapse group)
     """
-    total_conductance = np.zeros_like(target_ids, dtype=float)
-    for i, tg in enumerate(target_ids):
-        # assumption the source population starts with id 0 and progressively increases id, ie id = index
-        total_conductance[i] = (
-            conductance
-            * np.sum(synaptic_input[tg] * cell_rate[source_by_target[tg]]).item()
-        )
-    return target_ids, total_conductance
+    # synaptic input: Targets x Sources @  cell_rate[source_ids]: Sources x 1 -> Targets x 1
+    return (
+        target_ids,
+        conductance * synaptic_input @ cell_rate[source_ids],
+    )
+
+
+def effective_total_synaptic_conductance(
+    source_ids_e_e: np.ndarray,
+    target_ids_e_e: np.ndarray,
+    source_ids_i_e: np.ndarray,
+    target_ids_i_e: np.ndarray,
+    cell_rate_e: np.ndarray,
+    cell_rate_i: np.ndarray,
+    syn_const_e_e: float,
+    syn_const_i_e: float,
+    conductance_e_e: float,
+    conductance_i_e: float,
+):
+
+    """
+    effective total synaptic conductance for a group of synapses on a per target neuron basis,
+    e refers to the excitatory population and i to the inhibitory population in an EI-Network
+
+    :param source_ids_e_e: ids representing the source of e-e synaptic connections - each id represents the source neuron of a synapse
+    :param target_ids_e_e: ids representing the target of e-e synaptic connections - each id represents the target neuron of a synapse
+    :param source_ids_i_e: ids representing the source of i-e synaptic connections - each id represents the source neuron of a synapse
+    :param target_ids_i_e: ids representing the target of i-e synaptic connections - each id represents the target neuron of a synapse
+
+    :param cell_rate_e: cell rate of the excitatory population
+    :param cell_rate_i: cell rate of the inhibitory population
+
+    :param syn_const_e_e: synaptic input (constant) to the target neurons when the source neuron spikes for e-e synapses
+                          - either a scalar value (same for all synapses) or one value per synaptic connection
+    :param syn_const_i_e: synaptic input (constant) to the target neurons when the source neuron spikes for i-e synapses
+                          - either a scalar value (same for all synapses) or one value per synaptic connection
+    :param conductance_e_e: conductance for e-e synapses
+    :param conductance_i_e: conductance for i-e synapses
+
+    :return: effective total synaptic conductance per neuron of the entire e population
+    """
+
+    targets_e_e, sources_e_e, synaptic_input_e_e = compute_synaptic_input(
+        source_ids_e_e, target_ids_e_e, syn_const_e_e
+    )
+    targets_i_e, sources_i_e, synaptic_input_i_e = compute_synaptic_input(
+        source_ids_i_e, target_ids_i_e, syn_const_i_e
+    )
+
+    target_ids_e_e, total_conductance_e_e = synaptic_conductance(
+        targets_e_e,
+        sources_e_e,
+        cell_rate_e,
+        synaptic_input_e_e,
+        conductance_e_e,
+    )
+    target_ids_i_e, total_conductance_i_e = synaptic_conductance(
+        targets_i_e,
+        sources_i_e,
+        cell_rate_i,
+        synaptic_input_i_e,
+        conductance_i_e,
+    )
+
+    # assumes ids start at 0 and progressively increment
+    # inputs from pop_e (excitatory) and pop_i (inhibitory) are opposed
+    # note cell_rate.size ~ population size
+
+    total_conductance = np.zeros(cell_rate_e.size, dtype=float)
+    total_conductance[target_ids_i_e] -= total_conductance_i_e
+    total_conductance[target_ids_e_e] += total_conductance_e_e
+
+    return total_conductance

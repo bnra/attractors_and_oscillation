@@ -41,6 +41,7 @@ pathspec==0.9.0
 pexpect==4.8.0
 pickleshare==0.7.5
 Pillow==8.4.0
+pipdeptree==2.2.1
 platformdirs==2.4.0
 prompt-toolkit==3.0.22
 psutil==5.8.0

@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.abspath(".."))
 # -- Project information -----------------------------------------------------
 
 project = "Attractors and Oscillation"
-copyright = "2021, Benedikt Rank"
+copyright = "2022, Benedikt Rank"
 author = "Benedikt Rank"
 
 
@@ -33,7 +33,7 @@ autodoc_typehints = "description"
 
 autoapi_type = "python"
 autoapi_dirs = ["..", "."]
-autoapi_ignore = ['**/.docs/*', '**/test/*', '**/scripts/*', '*migrations*']
+autoapi_ignore = ['**/.docs/*', '**/test/*', '**/nb_tests/*', '**/data/*', '**/notes/*', '**/notebooks/*', '**/scripts/*', '*migrations*']
 
 modules_skipped = ['run_speed_test']
 

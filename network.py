@@ -1,3 +1,4 @@
+import math
 from typing import Callable, List, Tuple, Dict, Union, Iterable
 import brian2
 from brian2 import NeuronGroup, StateMonitor, TimedArray, ms, check_units
@@ -11,7 +12,6 @@ import numpy as np
 import os
 from abc import ABCMeta, abstractproperty
 
-from differential_equations.neuron_equations import eqs_P, eqs_I
 from utils import (
     Brian2UnitError,
     get_brian2_base_unit,
@@ -146,33 +146,28 @@ class PoissonDeviceGroup(SpikeDeviceGroup):
         return data
 
     @staticmethod
-    @check_units(offset=1, amplitude=1, angular_frequency=Hz, time_shift=ms)
+    @check_units(offset=1, amplitude=1, angularfrequency=1, timeshift=1)
     def create_time_variant_rate(
         offset: float = 1.0,
         amplitude: float = 1.0,
-        angular_frequency: Quantity = 2 * np.pi * Hz,
-        time_shift: Quantity = 0.0 * ms,
+        angularfrequency: float = 2 * np.pi,
+        timeshift: float = 0.0,
     ):
         """
         Create a time variant rate to pass to :meth:`PoissonDeviceGroup.__init__()` to create inhomogeneous poisson processes
-        rate: [ms]->[kHz]: t -> (offset + cos((t - time_shift[ms]) * angular_frequency[Hz]) * amplitude) * kHz
+        rate: [ms]->[kHz]: t -> (offset + cos((t - timeshift[ms]) * angularfrequency[Hz]) * amplitude) * kHz
 
         :param offset: offset of the rate function
         :param amplitude: scaling factor for amplitude of the rate function
-        :param angular_frequency: angular frequency of the rate function [Hz]
-        :param time_shift: time shift of the rate function [ms]
+        :param angularfrequency: angular frequency of the rate function [Hz]
+        :param timeshift: time shift of the rate function [ms]
         :return:  expression representing the time variant rate function, which specifies the rate in kHz per definition
         """
-        return f"({offset} + cos((t - {time_shift/ms} * ms) * {angular_frequency/Hz} * Hz) * {amplitude}) * kHz"
+        return f"({offset} + cos((t - {timeshift} * ms) * {angularfrequency} * Hz) * {amplitude}) * kHz"
 
 
 class PoissonBlockedStimulus(PoissonDeviceGroup):
     @check_units(
-        size=1,
-        pattern=1,
-        block_interval=1,
-        one_rate=Hz,
-        zero_rate=Hz,
         t=ms,
         stimulus_dt=ms,
     )
@@ -180,16 +175,16 @@ class PoissonBlockedStimulus(PoissonDeviceGroup):
         self,
         size: int,
         pattern: np.ndarray,
-        block_interval: Tuple[int, int],
-        one_rate: Quantity,
-        zero_rate: Quantity,
+        block_interval: List[Tuple[int, int]],
+        one_rate: Union[Quantity, str],
+        zero_rate: Union[Quantity, str],
         t: Quantity,
         stimulus_dt: Quantity,
     ):
         """
         :param size: size of the group ~ number of spike devices
         :param pattern:  pattern (mask) across all spike devices in the group (shape: (size,) ) - used for setting rate for all indices in block_interval
-        :param block_interval: half-open interval ( [start,end) ) of indices of block tb set to rate
+        :param block_interval: set of half-open time intervals ( [start,end) ) of (time) indices of blocked array tb set to rate
         :param t: simulation time [ms]
         :param stimulus_dt: time step of the stimulus ~ size of one block for which rate is held constant at stimulus_block[i]
         """
@@ -207,20 +202,15 @@ class PoissonBlockedStimulus(PoissonDeviceGroup):
 
     @staticmethod
     @check_units(
-        size=1,
-        pattern=1,
-        block_interval=1,
-        one_rate=Hz,
-        zero_rate=Hz,
         t=ms,
         stimulus_dt=ms,
     )
     def create_blocked_rate(
         size: int,
         pattern: np.ndarray,
-        block_interval: Tuple[int, int],
-        one_rate: Quantity,
-        zero_rate: Quantity,
+        block_interval: List[Tuple[int, int]],
+        one_rate: Union[Quantity, str],
+        zero_rate: Union[Quantity, str],
         t: Quantity,
         stimulus_dt: Quantity,
     ):
@@ -232,9 +222,9 @@ class PoissonBlockedStimulus(PoissonDeviceGroup):
 
         :param size: size of the group ~ number of spike devices
         :param pattern:  pattern (mask) across all spike devices in the group (shape: (size,) ) - used for setting rate for all indices in block_interval
-        :param block_interval: half-open interval ( [start,end) ) of indices of block tb set to rate
+        :param block_interval: set of half-open time intervals ( [start,end) ) of (time) indices of blocked array tb set to rate
         :param t: simulation time [ms]
-        :param stimulus_dt: time step of the stimulus ~ size of one block for which rate is held constant at stimulus_block[i]
+        :param stimulus_dt: time step of the stimulus ~ size of one block for which rate is held constant in interval t e [t' * stimulus_dt, (t'+1) * stimulus_dt]: stimulus_block[t]
         :return: rates for individual devices across time blocks of size stimulus_dt
         """
         if t < stimulus_dt:
@@ -248,19 +238,34 @@ class PoissonBlockedStimulus(PoissonDeviceGroup):
 
         num_blocks = int(np.ceil(t / stimulus_dt))
 
-        if not (
-            len(block_interval) == 2
-            and isinstance(block_interval[0], int)
-            and isinstance(block_interval[1], int)
-            and block_interval[1] > block_interval[0]
-            and block_interval[0] >= 0
-            and block_interval[1] < size
+        if not all(
+            [
+                len(itv) == 2
+                and isinstance(itv[0], int)
+                and isinstance(itv[1], int)
+                and itv[1] > itv[0]
+                and itv[0] >= 0
+                and itv[1] <= num_blocks
+                for itv in block_interval
+            ]
         ):
-            raise ValueError(
-                f"block_interval must contain exactly two integer values x,y where y > x, x >= 0 and y < size (param size). Is {block_interval}."
-            )
 
-        x, y = block_interval
+            errs = [
+                [
+                    len(itv) == 2,
+                    isinstance(itv[0], int),
+                    isinstance(itv[1], int),
+                    itv[1] > itv[0],
+                    itv[0] >= 0,
+                    itv[1] <= num_blocks,
+                ]
+                for itv in block_interval
+            ]
+            print(errs)
+            raise ValueError(
+                f"block_interval must be a set of exactly two integer values x,y where y > x, x >= 0 and y < size (param size), where x >= 0, x <=y, y <= number_time_steps, where"
+                + f" number time steps is t/dt. Is {block_interval}."
+            )
 
         rate = np.zeros_like(pattern, dtype=float)
         rate[pattern] = one_rate / Hz
@@ -268,7 +273,8 @@ class PoissonBlockedStimulus(PoissonDeviceGroup):
 
         # shape: t,i ~ t rows and i columns ~ one row represents spike rates across devices for one specific time block t
         stimulus_block = np.zeros(num_blocks * size).reshape(num_blocks, size)
-        stimulus_block[x:y] = np.tile(rate, y - x).reshape(-1, rate.shape[0])
+        for x, y in block_interval:
+            stimulus_block[x:y] = np.tile(rate, y - x).reshape(-1, rate.shape[0])
         return TimedArray(stimulus_block * Hz, dt=stimulus_dt)
 
     @property
@@ -277,6 +283,55 @@ class PoissonBlockedStimulus(PoissonDeviceGroup):
         stim, unit = convert_and_clean_brian2_quantity(self.stimulus)
         data["device"]["stimulus"] = {"value": stim.values, "unit": unit}
         return data
+
+    @staticmethod
+    @check_units(
+        offset=ms,
+        stim_dur=ms,
+        stim_relax=ms,
+        sim_t=ms,
+        stimulus_dt=ms,
+    )
+    def create_blocked_interval(
+        offset: Quantity, stim_dur: Quantity, stim_relax: Quantity, sim_t: Quantity
+    ) -> Tuple[List[Tuple[int, int]], Quantity]:
+        """
+        :param offset: time offset [ms] - offset where no stimulus is presented
+        :param stim_dur: stimulus duration [ms] - duration of an instance of stimulus presentation
+        :param stim_relax: stimulus relaxation [ms] - relaxation period between stimulus presentations
+        :param sim_t: duration of the simulation [ms]
+        :return: set of block intervals and stimulation time step
+        """
+
+        if (
+            offset / ms % 1.0 != 0.0
+            or stim_dur / ms % 1.0 != 0.0
+            or stim_relax / ms % 1.0 != 0.0
+        ):
+            raise ValueError(
+                "quantities [ms]: offset, stim_dur and stim_relax must be whole numbers (x % 1.0 == 0.0)"
+            )
+
+        offset = int(offset / ms)
+        stim_dur = int(stim_dur / ms)
+        stim_relax = int(stim_relax / ms)
+        sim_t = int(sim_t / ms)
+
+        # time step of the blocked interval at which the time dimension of the timed array is resolved - note gcd(a,b,c) = gcd(gcd(a,b),c)
+        stimulus_dt = math.gcd(math.gcd(stim_dur, stim_relax), offset)
+
+        def convert_time_to_step(t: float, dt: float):
+            return int(np.ceil(t / dt))
+
+        return [
+            (
+                convert_time_to_step(offset + (stim_dur + stim_relax) * i, stimulus_dt),
+                convert_time_to_step(
+                    offset + (stim_dur + stim_relax) * (i) + stim_dur, stimulus_dt
+                ),
+            )
+            for i in range(int(np.floor((sim_t - offset) / (stim_dur + stim_relax))))
+        ], stimulus_dt * ms
 
 
 class NeuronPopulation(SpikeDeviceGroup):
@@ -332,7 +387,7 @@ class NeuronPopulation(SpikeDeviceGroup):
         self._mon = None
         super().__init__()
 
-    def set_pop_var(self, variable: str, value: Quantity):
+    def set_pop_var(self, variable: str, value: Union[Quantity, np.ndarray]):
         """
         set population variable - variables defined in eqs param of :meth:`NeuronPopulation.__init__()`
 
@@ -345,16 +400,20 @@ class NeuronPopulation(SpikeDeviceGroup):
             )
         shape_pop = np.array(self.get_pop_var(variable)).shape
         shape_val = np.array(value).shape
-        if not shape_pop == shape_val:
+        # value needs tb scalar or of same shape as the variable in model
+        if not (np.array(value).size == 1 or shape_pop == shape_val):
             raise ValueError(
                 f"Parameter value must be of same shape as the neuron population { shape_pop }, but is of shape { shape_val }."
             )
-        base_unit_pop = get_brian2_base_unit(self.get_pop_var(variable))
-        base_unit_val = get_brian2_base_unit(value)
-        if not base_unit_pop == base_unit_val:
-            raise Brian2UnitError(
-                f"Base unit of variable { variable } in population does not match base unit of value {value}, {base_unit_pop} and {base_unit_val} respectively."
-            )
+
+        x = self.get_pop_var(variable)
+        if isinstance(x, Quantity):
+            base_unit_pop = get_brian2_base_unit(self.get_pop_var(variable))
+            base_unit_val = get_brian2_base_unit(value)
+            if not base_unit_pop == base_unit_val:
+                raise Brian2UnitError(
+                    f"Base unit of variable { variable } in population does not match base unit of value {value}, {base_unit_pop} and {base_unit_val} respectively."
+                )
         self._pop.variables[variable].set_value(value)
 
     def get_pop_var(self, variable: str) -> Quantity:
@@ -445,30 +504,11 @@ class NeuronPopulation(SpikeDeviceGroup):
         ids_monitored = [neuron_ids.index(n) for n in ids]
 
         # log after neurons have update
-        # valid values see Synapse.monitor (below)
+        # valid values see Synapse.monitor (below) - sensible choices: after_thresholds, end
         self._mon = StateMonitor(
-            self._pop, variables, record=ids_monitored, when="after_groups", dt=dt
+            self._pop, variables, record=ids_monitored, when="end", dt=dt
         )
 
-
-class EINetwork:
-    """
-    creates an E-I network with fixed equations and parameters
-
-    kwargs based on AAshqar https://github.com/AAshqar/GammaCoupling/blob/master/Network_utils.py
-    """
-
-    def __new__(cls, size_e, size_i):
-        """
-        :return: a tuple of instances of :class:`NeuronPopulation`: an excitatory and an inhibitory network with fixed equations and parameters
-        """
-        E = NeuronPopulation(
-            size_e, eqs_P, threshold="v_s>-30*mV", refractory=1.3 * ms, method="rk4"
-        )
-        I = NeuronPopulation(
-            size_i, eqs_I, threshold="v_s>-30*mV", refractory=1.3 * ms, method="rk4"
-        )
-        return E, I
 
 
 class Synapse:
@@ -550,7 +590,6 @@ class Synapse:
             params[p] = v
 
         if self.on_pre != None:
-            print(f"self.on_pre {self.on_pre} {type(self.on_pre)}")
             params["on_pre"] = self.on_pre
 
         return params

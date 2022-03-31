@@ -1,4 +1,4 @@
-from scipy.stats import uniform, norm
+from scipy.stats import uniform, norm, poisson, expon
 import numpy as np
 
 
@@ -26,6 +26,26 @@ def draw_normal(mu: float = 0.0, sigma: float = 1.0, size: int = 1) -> np.ndarra
     """
     return norm.rvs(loc=mu, scale=sigma, size=size)
 
+
+def draw_poisson(lmbda: float = 1.0, size: int = 1) -> np.ndarray:
+    """
+    draw random samples from poisson distribution
+
+    :param lmbda: lmbda of the distribution
+    :param size: number of random samples tb drawn
+    :return: sampled values
+    """
+    return poisson.rvs(lmbda, size=size)
+
+def draw_exponential(lmbda: float = 1.0, size: int = 1) -> np.ndarray:
+    """
+    draw random samples from exponential distribution
+
+    :param lmbda: lmbda of the distribution
+    :param size: number of random samples tb drawn
+    :return: sampled values
+    """
+    return expon.rvs(scale=1/lmbda, size=size)
 
 def draw_bernoulli(p: float = 0.5, size: int = 1) -> np.ndarray:
     """

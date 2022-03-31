@@ -1,3 +1,4 @@
+import string
 import numpy as np
 import os
 from typing import Any, List, Tuple, Dict, Union
@@ -171,13 +172,9 @@ class BrianExperiment:
     It is crucial that all network definitions (instances of :class:`NeuronPopulation`, :class:`Synapse`,...) are bound to a unique name,
     as logic in this class makes use of these names, eg. for persisting.
 
-    Note if neuron equations and parameters reside elsewhere (see :attr:`BrianExperiment.neuron_eq_module`, :attr:`BrianExperiment.neuron_param_module`)
-    then update these class variables like so:
+    Note if neuron equations and parameters reside elsewhere (see :attr:`neuron_eq_module`, :attr:`neuron_param_module`)
+    then pass the corresponding modules to :meth:`__init__`
 
-    .. code-block:: python
-
-        BrianExperiment.neuron_eq_module = xxx
-        BrianExperiment.neuron_param_module = xxx
 
     Example
 
@@ -201,9 +198,6 @@ class BrianExperiment:
         [0 1 2 3 4 5 6 7 8 9]
 
     """
-
-    neuron_eq_module = "differential_equations.neuron_equations"
-    neuron_param_module = "differential_equations.neuron_parameters"
 
     @staticmethod
     def resolve_module_name(mod: ModuleType) -> str:
@@ -253,6 +247,8 @@ class BrianExperiment:
         object_path: str = "/",
         neuron_eqs: List[str] = [],
         neuron_params: List[str] = [],
+        neuron_eq_module: str = "differential_equations.eif_equations",
+        neuron_param_module: string = "differential_equations.eif_parameters",
     ):
         """
         Initialize parameters used in setup and teardown.
@@ -266,8 +262,10 @@ class BrianExperiment:
         :param persist: specifies whether data is tb persisted
         :param path: path to the file to be used for persisting - if not set and persist=True will automatically generate file name 'experiments/experiment_i'
         :param object_path: path within the hdf5 file starting with root '/', eg. '/run_x/data'
-        :param neuron_eqs: neuron equations to persist - verified against :attr:`BrianExperiment.neuron_eq_module`
-        :param neuron_params: neuron parameters to persist - verified against :attr:`BrianExperiment.neuron_param_module`
+        :param neuron_eqs: neuron equations to persist - verified against parameter neuron_eq_module
+        :param neuron_params: neuron parameters to persist - verified against parameter neuron_param_module
+        :param neuron_eq_module: module containing equations for neuron models - ensure that the equations used for the neuron and synapse models are contained therein
+        :param neuron_param_module: module containing parameters for neuron models - ensure that the parameters used for the neuron and synapse models are contained therein
         """
 
         if persist:
@@ -287,22 +285,22 @@ class BrianExperiment:
                 raise persistence.opath.OpathError(error)
 
             if neuron_eqs:
-                module = importlib.import_module(BrianExperiment.neuron_eq_module)
+                module = importlib.import_module(self.neuron_eq_module)
                 missing_names = [
                     eq for eq in neuron_eqs if eq not in module.__dict__.keys()
                 ]
                 if len(missing_names) > 0:
                     raise ValueError(
-                        f"Some equations do not exist within {BrianExperiment.neuron_eq_module}: {missing_names}"
+                        f"Some equations do not exist within {self.neuron_eq_module}: {missing_names}"
                     )
             if neuron_params:
-                module = importlib.import_module(BrianExperiment.neuron_param_module)
+                module = importlib.import_module(self.neuron_param_module)
                 missing_names = [
                     eq for eq in neuron_params if eq not in module.__dict__.keys()
                 ]
                 if len(missing_names) > 0:
                     raise ValueError(
-                        f"Some equations do not exist within {BrianExperiment.neuron_param_module}: {missing_names}"
+                        f"Some equations do not exist within {self.neuron_param_module}: {missing_names}"
                     )
 
         if (
@@ -320,6 +318,7 @@ class BrianExperiment:
 
         self._persist = persist
         self._dt = dt
+
         self._path = os.path.abspath(path) if path else None
         self._opath = object_path
         self._neuron_equations = neuron_eqs
@@ -330,6 +329,8 @@ class BrianExperiment:
         self._progress_bar = progress_bar
 
         self._meta = {}
+        dt, unit_dt = convert_and_clean_brian2_quantity(self.dt)
+        self._meta["dt"] = {"value": np.array(dt), "unit": unit_dt}
 
         # whether user is within context
         self._in_context = False
@@ -337,6 +338,9 @@ class BrianExperiment:
         self._device_context = []
 
         self._persist_data = BrianExperiment.PersistData(persist, self)
+
+        self.neuron_eq_module = neuron_eq_module
+        self.neuron_param_module = neuron_param_module
 
     @property
     def time_elapsed(self):
@@ -428,9 +432,7 @@ class BrianExperiment:
         def clean_ns(ns: Dict[str, Any]) -> Dict[str, Any]:
             return {k: v for k, v in ns.items() if not k.startswith("__")}
 
-        neuron_parameters_mod = importlib.import_module(
-            BrianExperiment.neuron_param_module
-        )
+        neuron_parameters_mod = importlib.import_module(self.neuron_param_module)
         namespace = clean_ns(neuron_parameters_mod.__dict__)
         namespace.update(clean_ns(self._retrieve_callers_context()))
         return namespace
@@ -451,8 +453,14 @@ class BrianExperiment:
 
         self._timing.add_timing(process="device_collection")
 
-        for device in self._collect_devices():
-            self._network.add(device)
+        if self._network == None:
+            self._network = Network()
+            for device in self._collect_devices():
+                self._network.add(device)
+        else:
+            devices = set(self._collect_devices())
+            for dev in devices.difference(self._network.objects):
+                self._network.add(dev)
 
         self._timing.add_timing(process="simulation")
 
@@ -471,9 +479,9 @@ class BrianExperiment:
         self._timing.finalize()
 
         tt, unit = convert_and_clean_brian2_quantity(t)
-        dt, unit_dt = convert_and_clean_brian2_quantity(self.dt)
+        if "t" in self._meta.keys():
+            tt += self._meta["t"]["value"]
         self._meta["t"] = {"value": np.array(tt), "unit": unit}
-        self._meta["dt"] = {"value": np.array(dt), "unit": unit_dt}
 
     def __enter__(self):
 
@@ -481,9 +489,6 @@ class BrianExperiment:
         self._save_context()
 
         defaultclock.dt = self._dt
-
-        # create network and register with class variable
-        self._network = Network()
 
         self._in_context = True
 
@@ -566,7 +571,7 @@ class BrianExperiment:
 
                 # persist all equations passed in __init__()
                 if self._neuron_equations:
-                    module = importlib.import_module(BrianExperiment.neuron_eq_module)
+                    module = importlib.import_module(self.neuron_eq_module)
                     mod_name = BrianExperiment.resolve_module_name(module)
                     fm[mod_name] = Node()
                     for eq in self._neuron_equations:
@@ -574,9 +579,7 @@ class BrianExperiment:
 
                 # persist all parameters passed in __init__()
                 if self._neuron_parameters:
-                    module = importlib.import_module(
-                        BrianExperiment.neuron_param_module
-                    )
+                    module = importlib.import_module(self.neuron_param_module)
                     mod_name = BrianExperiment.resolve_module_name(module)
                     fm[mod_name] = Node()
                     for param in self._neuron_parameters:
@@ -595,7 +598,8 @@ class BrianExperiment:
                 )
 
                 # save all parameters as we need them to resolve variables in equations
-                module = importlib.import_module(BrianExperiment.neuron_param_module)
+                module = importlib.import_module(self.neuron_param_module)
+
                 fm["meta"]["neuron_parameters"] = {
                     k: dict(
                         zip(

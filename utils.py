@@ -6,6 +6,7 @@ import inspect
 import brian2
 from brian2.units.fundamentalunits import Quantity, get_unit, Unit
 import numpy as np
+import subprocess
 
 
 class TestEnv:
@@ -37,13 +38,17 @@ class TestEnv:
         os.chdir(self.initial_dir)
         shutil.rmtree(self.tmp_dir)
 
-        # proc = psutil.Process()
-        # fds = proc.open_files()
-        # for f in fds:
-        #    os.close(f.fd)
 
         if exc_type != None:
             raise exc_type(exc_value, traceback)
+
+
+def run_cmd(cmd):
+    p = subprocess.Popen(
+        [cmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True
+    )
+    out, err = p.communicate()
+    return out.decode("utf-8"), err.decode("utf-8")
 
 
 def validate_file_path(path: str, ext: str = ""):
@@ -351,7 +356,7 @@ def restrict_to_interval(
     if t_end == None:
         idx_end = x.shape[0] - 1
     else:
-        idx_end = int(t_end / dt)
+        idx_end = round(t_end / dt)
         if idx_end >= x.shape[0]:
             idx_end = x.shape[0] - 1
 

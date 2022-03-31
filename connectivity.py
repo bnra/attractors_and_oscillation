@@ -19,8 +19,6 @@ def all2all(
 def bernoulli(
     source: Iterable[int], dest: Iterable[int], p: float
 ) -> Tuple[np.ndarray, np.ndarray]:
-    syn_source = np.array([])
-    syn_dest = np.array([])
 
     dest = np.asarray(dest)
     source = np.asarray(source)

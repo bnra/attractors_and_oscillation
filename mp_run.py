@@ -1,6 +1,10 @@
 import sys
 import os
 import argparse
+from typing import Callable
+import itertools
+import tqdm
+import re
 
 path = os.path.abspath(".")
 
@@ -18,266 +22,80 @@ while "test" not in os.listdir(path):
             root_checked = True
 sys.path.insert(0, path)
 
-from utils import TestEnv
 
 import mp
 
 import numpy as np
-from brian2 import ms, mV, kHz
 import os
-import multiprocessing
 
-import attractor
 from utils import TestEnv
 
-from BrianExperiment import BrianExperiment
-from network import NeuronPopulation, PoissonDeviceGroup, Connector
-from distribution import draw_uniform
-from differential_equations.neuron_equations import (
-    eqs_P,
-    eqs_I,
-    PreEq_AMPA,
-    PreEq_AMPA_pois,
-    PreEq_GABA,
+from persistence import FileMap
+
+from experiments_eif import (
+    generate_fixed_patterns,
+    run_exp_eif_attr,
+    run_exp_eif_attr_blocked_stimulus,
 )
-from differential_equations.neuron_parameters import delay_AMPA, delay_GABA, eL_p, eL_i
 
 
 
 
-def run_exp_given_weights(
-    sim_time:float,
-    path: str,
-    patterns:np.ndarray,
-    scl:np.ndarray,
-    esize: int,
-    rpe: float,
-    rpi: float,
+
+def run_single_proc(f: Callable, parameters, kwargs, base_path):
+
+    plabels, pvalues = zip(*[(p, parameters[p]) for p in parameters.keys()])
+    # instances = itertools.product(*pvalues)
+
+    for instance in tqdm.tqdm(itertools.product(*pvalues)):
+        kwg = kwargs.copy()
+        instance = list(zip(plabels, instance))
+        for p, v in instance:
+            kwg[p] = v
+        fn_params = []
+        for k, v in list(kwargs.items()) + instance:
+            if np.isscalar(v):
+                fn_params.append((k, v))
+            elif isinstance(v, dict) and any([np.isscalar(vv) for vv in v.values()]):
+                for kk, vv in v.items():
+                    if np.isscalar(vv):
+                        fn_params.append((kk, vv))
+        fname = mp.file_name_generator(fn_params)
+        # [(k, v) for k, v in list(kwargs.items()) + instance if np.isscalar(v)]
+        fpath = os.path.join(base_path, fname)
+
+        kwg["path"] = fpath
+
+        f(**kwg)
+
+
+def run_experiments(
+    f: Callable,
+    parameters,
+    kwargs,
+    base_path,
+    multi_proc: bool = True,
+    num_procs: int = None,
 ):
+    if multi_proc == True:
+        pool = mp.Pool(base_path, parameters, f, kwargs, num_procs=num_procs)
+        pool.run()
+    else:
+        run_single_proc(f, parameters, kwargs, base_path)
 
 
-    with BrianExperiment(persist=True, path=path, report_progress=True) as exp:
-
-        exp.persist_data["patterns"] = patterns
-
-        # EI network
-
-        # populations
-        E = NeuronPopulation(
-            esize, eqs_P, threshold="v_s>-30*mV", refractory=1.3 * ms, method="rk4"
+def parse_cli_arg_iterable(s: str):
+    if re.fullmatch("\[[0-9]+(.[0-9]+)?:[0-9]+(.[0-9]+)?:[0-9]+(.[0-9]+)?\]", s):
+        return np.arange(
+            *[float(r) if "." in r else int(r) for r in s[1:-1].split(":")]
         )
-        I = NeuronPopulation(
-            esize // 4, eqs_I, threshold="v>-30*mV", refractory=1.3 * ms, method="rk4"
-        )
-
-        # synapses
-        connect = Connector(synapse_type="static")
-
-
-        S_E_E = connect(
-            E,
-            E,
-            E.ids,
-            E.ids,
-            connect=("all2all", {}),
-            model="scale : 1",
-            on_pre="x_AMPA += alphax * scale",
-            delay=delay_AMPA,
-            syn_params={"scale": scl},
-        )
-
-        # S_E_E.monitor(S_E_E.synapses[0:10], variables=["x_AMPA"])
-
-        S_E_I = connect(
-            E,
-            I,
-            E.ids,
-            I.ids,
-            connect=("bernoulli", {"p": 0.1}),
-            on_pre=PreEq_AMPA,
-            delay=delay_AMPA,
-        )
-
-        S_I_E = connect(
-            I,
-            E,
-            I.ids,
-            E.ids,
-            connect=("bernoulli", {"p": 0.1}),
-            on_pre=PreEq_GABA,
-            delay=delay_GABA,
-        )
-
-        S_I_I = connect(
-            I,
-            I,
-            I.ids,
-            I.ids,
-            connect=("bernoulli", {"p": 0.1}),
-            on_pre=PreEq_GABA,
-            delay=delay_GABA,
-        )
-
-        # initialize vars and monitor
-
-        E.set_pop_var(
-            variable="v_s",
-            value=draw_uniform(a=eL_p / mV - 5.0, b=eL_p / mV + 5.0, size=E.size) * mV,
-        )
-        E.set_pop_var(
-            variable="v_d",
-            value=draw_uniform(a=eL_p / mV - 5.0, b=eL_p / mV + 5.0, size=E.size) * mV,
-        )
-
-        E.monitor(
-            E.ids[0:2], ["v_s", "x_AMPA", "synP", "x_AMPA_ext", "synP_ext"], dt=1.0 * ms
-        )
-        E.monitor_spike(E.ids)
-
-        I.set_pop_var(
-            variable="v",
-            value=draw_uniform(a=eL_i / mV - 5.0, b=eL_i / mV + 5.0, size=I.size) * mV,
-        )
-
-        I.monitor(I.ids[0:2], ["v"], dt=1.0 * ms)
-        I.monitor_spike(I.ids)
-
-        # external inputs
-
-        # poisson device groups
-        PE = PoissonDeviceGroup(size=E.size, rate=rpe * kHz)
-        # PE.monitor_spike(PE.ids)
-
-        PI = PoissonDeviceGroup(size=I.size, rate=rpi * kHz)
-        # PI.monitor_spike(PI.ids)
-
-        # synapses
-        S_PE_E = connect(
-            PE,
-            E,
-            PE.ids,
-            E.ids,
-            connect=("one2one", {}),
-            on_pre="x_AMPA_ext += 1.5*alphax",
-            delay=delay_AMPA,
-        )
-        S_PI_I = connect(
-            PI,
-            I,
-            PI.ids,
-            I.ids,
-            connect=("one2one", {}),
-            on_pre=PreEq_AMPA_pois,
-            delay=delay_AMPA,
-        )
-
-        exp.run(sim_time * ms)
-
-
-def run_exp_cov(
-    path: str,
-    sparsity: float,
-    numpatterns: int,
-    esize: int,
-    rpe: float,
-    rpi: float,
-):
-
-    sim_time = 500.0
-
-    # patterns
-    patterns = np.random.choice(
-        [True, False], p=[sparsity, 1.0 - sparsity], size=numpatterns * esize
-    ).reshape(numpatterns, esize)
-
-    # scale
-    s = attractor.covariation(patterns)
-
-    run_exp_given_weights(sim_time, path, patterns, s, esize, rpe, rpi)
-
-
-
-
-
-def run_exp_zscore_sd(
-    path: str,
-    sparsity: float,
-    numpatterns: int,
-    negoffsetsd: float,
-    esize: int,
-    rpe: float,
-    rpi: float,
-):
-
-    sim_time = 500.0
-
-
-    # patterns
-    patterns = np.random.choice(
-        [True, False], p=[sparsity, 1.0 - sparsity], size=numpatterns * esize
-    ).reshape(numpatterns, esize)
-
-    # compute unclipped scaling
-    s = attractor.compute_conductance_scaling_unclipped(patterns, sparsity)
-
-    s = attractor.z_score(s)
-    # - negoffset - note (0,1)- gaussian
-    s = s - negoffsetsd
-
-    s = np.maximum(0, s)
-
-    run_exp_given_weights(sim_time, path, patterns, s, esize, rpe, rpi)
-
-
-
-
-def run_exp(
-    path: str,
-    sparsity: float,
-    numpatterns: int,
-    norm: str,
-    scaling: int,
-    esize: int,
-    rpe: float,
-    rpi: float,
-):
-
-    sim_time = 10.0  # 500.0
-
-    normalizations = {
-        "id": lambda x: x,
-        "norm": attractor.normalize,
-        "zscore": attractor.z_score,
-    }
-
-    # patterns
-
-    patterns = np.random.choice(
-        [True, False], p=[sparsity, 1.0 - sparsity], size=numpatterns * E.size
-    ).reshape(numpatterns, E.size)
-
-    # scale factor
-
-    # s = np.zeros(E.size * E.size).reshape(E.size, E.size)
-
-    # compute unclipped scaling
-    s = attractor.compute_conductance_scaling_unclipped(patterns, sparsity)
-    s = normalizations[norm](s)
-    s = np.maximum(0, s)
-    s = s * scaling
-
-    run_exp_given_weights(sim_time, path, patterns, s, esize, rpe, rpi)
-
-
-
-def fmap(path, b, data, acc):
-    proc = multiprocessing.current_process()
-
-    x = np.math.factorial(b * data + acc)
-    print(
-        f"                    Result {proc.name} w/ id {proc.pid}: {b,data,acc} -> {x.bit_length()}\n\n"
-    )
-    return x
+    elif re.fullmatch("[0-9]+(.[0-9]+)?(,[0-9]+(.[0-9]+)?)*", s):
+        return [
+            float(e) if "." in e else int(e)
+            for e in [e for e in s.split(",") if len(e) > 0]
+        ]
+    else:
+        raise ValueError(f"format of string {s} unknown")
 
 
 if __name__ == "__main__":
@@ -287,63 +105,208 @@ if __name__ == "__main__":
     parser.add_argument(
         "--sim",
         type=str,
-        choices=["simple", "normal", "cov", "zscore"],
+        choices=[
+            "eif_attr",
+            "eif_attr_stim",
+        ],
         help="run brian simulation",
     )
     parser.add_argument("--path", type=str, required=True)
+    parser.add_argument(
+        "--continuous_stim", type=str, choices=["True", "False"], default="False"
+    )
+    parser.add_argument(
+        "--weighted", type=str, choices=["True", "False", "True,False"], default="True"
+    )
+    parser.add_argument("--simtime", type=float, default=1000.0)
+    parser.add_argument(
+        "--perturbation",
+        type=str,
+        default="0.0",
+        help="comma separated list or slice ('[start:end:step]') of perturbation values",
+    )
+    parser.add_argument(
+        "--stimulus_pattern_idx",
+        type=str,
+        default="0",
+        help="comma separated list or slice ('[start:end:step]') of indices tb used as pattern for stimulus presentation",
+    )
+    parser.add_argument(
+        "--norm",
+        type=str,
+        default="1.0",
+        help="comma separated list or slice ('[start:end:step]') of norm values",
+    )
+
+    parser.add_argument(
+        "--rpe",
+        type=str,
+        default="3.9",
+        help="comma separated list or slice ('[start:end:step]') of norm values",
+    )
+
+    parser.add_argument(
+        "--rpi",
+        type=str,
+        default="5.15",
+        help="comma separated list or slice ('[start:end:step]') of norm values",
+    )
+
+
+    parser.add_argument(
+        "--beta",
+        type=str,
+        default="0.5",
+        help="comma separated list or slice ('[start:end:step]') of norm values",
+    )
+
+    parser.add_argument(
+        "--minusbeta",
+        type=str,
+        default="1.0",
+        help="comma separated list or slice ('[start:end:step]') of norm values",
+    )
 
     args = parser.parse_args()
 
     sim = args.sim
     base_path = args.path
 
-    if sim == "normal":
-        params = {
-            "sparsity": np.arange(0.08, 0.3, 0.01),  # 0.17, 0.23
-            "numpatterns": [n for n in range(120, 145, 5)],
-            "norm": ["norm", "zscore", "id"],
-        }
-        kwargs = {"scaling": 5.0, "esize": 4000, "rpe": 6.5, "rpi": 1.0}
-        f = run_exp
-    elif sim == "simple":
-        # simple
-        params = {"b": [2, 3, 4], "data": list(range(99990, 100000)), "acc": [1, 2]}
-        f = fmap
-        kwargs = {}
-    elif sim == "cov":
-        params = {"sparsity": np.array([0.01, 0.1])}
-        kwargs = {
-            "esize": 4000,
-            "numpatterns": 100,
-            "rpe": 1.0,
-            "rpi": 1.0,
-        }
-        f = run_exp_cov
-
-    else:
-        # "zscore"
-
-        # params = {
-        #     "sparsity": np.arange(0.08, 0.25, 0.02),
-        #     "numpatterns": [130],
-        #     "negoffsetsd": [0.8 + e for e in np.arange(0.0, 0.5, 0.1)],
-        #     "rpe": np.arange(1.0, 8.0, 1.0),
-        #     "rpi": np.arange(1.0, 8.0, 1.0),
-        # }
-        params = {"sparsity": np.array([0.01, 0.1])}
-        kwargs = {
-            "esize": 4000,
-            "numpatterns": 100, # try 20 or sth 
-            "negoffsetsd": 0.8,
-            "rpe": 1.0,
-            "rpi": 1.0,
-        }
-        f = run_exp_zscore_sd
-
-    pool = mp.Pool(
-        base_path,
-        params,
-        f,
-        kwargs,
+    continuous_stim = True if args.continuous_stim == "True" else False
+    weighted = (
+        (True,)
+        if args.weighted == "True"
+        else (True, False)
+        if args.weighted == "True,False"
+        else (False,)
     )
-    pool.run()
+    perturbation = parse_cli_arg_iterable(args.perturbation)
+    norm = parse_cli_arg_iterable(args.norm)
+    stimulus_pattern_idx = parse_cli_arg_iterable(args.stimulus_pattern_idx)
+
+    rpe = parse_cli_arg_iterable(args.rpe)
+    rpi = parse_cli_arg_iterable(args.rpi)
+
+
+    beta = parse_cli_arg_iterable(args.beta)
+    minusbeta = parse_cli_arg_iterable(args.minusbeta)
+
+    simtime = args.simtime
+
+    if not os.path.isdir(base_path):
+        if not os.path.isfile(base_path):
+            print(f"Creating directory {base_path}.")
+            os.makedirs(base_path)
+        else:
+            raise ValueError(
+                "A file of name {base_path} exists already (yet not a directory.)"
+            )
+
+    if sim == "eif_attr":
+
+        pattern_fname = "pattern.h5"
+        pattern_path = os.path.abspath(os.path.join(base_path, pattern_fname))
+
+        # generate pattern if file does not exist yet
+        if not os.path.isfile(pattern_path):
+            # generate pattern with fixed number of 1s ~ allows computing single threshold for all patterns
+
+            # E pop size ~ pattern_length
+            esize = 4000
+            sparsity = 0.05  # 0.2
+
+            pattern = generate_fixed_patterns(
+                esize=esize, sparsity=sparsity, numpatterns=20
+            )
+
+            # persist pattern
+            with FileMap(os.path.join(base_path, pattern_fname), mode="write") as f:
+                f["pattern"] = pattern
+                f["sparsity"] = sparsity
+        else:
+            with FileMap(os.path.join(base_path, pattern_fname), mode="read") as f:
+                pattern = f["pattern"]
+                sparsity = f["sparsity"]
+
+        esize = pattern.shape[1]
+
+    
+        params = {
+            "rpe": rpe,  
+            "rpi": rpi,
+            "weighted": [*weighted],
+            "norm": norm,
+
+        }
+
+        kwargs = {
+            "esize": esize,
+            "simtime": simtime,
+            "sparsity": sparsity,
+            "pattern": pattern,
+        }
+
+        f = run_exp_eif_attr
+
+        run_experiments(f, params, kwargs, base_path, multi_proc=True, num_procs=6)
+
+    elif sim == "eif_attr_stim":
+
+        pattern_fname = "pattern.h5"
+        pattern_path = os.path.abspath(os.path.join(base_path, pattern_fname))
+
+        # generate pattern if file does not exist yet
+        if not os.path.isfile(pattern_path):
+            # generate pattern with fixed number of 1s ~ allows computing single threshold for all patterns
+
+            # E pop size ~ pattern_length
+            esize = 4000
+            sparsity = 0.05
+
+            pattern = generate_fixed_patterns(
+                esize=esize, sparsity=sparsity, numpatterns=20
+            )
+
+            # persist pattern
+            with FileMap(os.path.join(base_path, pattern_fname), mode="write") as f:
+                f["pattern"] = pattern
+                f["sparsity"] = sparsity
+        else:
+            with FileMap(os.path.join(base_path, pattern_fname), mode="read") as f:
+                pattern = f["pattern"]
+                sparsity = f["sparsity"]
+
+        esize = pattern.shape[1]
+
+        if (
+            max(stimulus_pattern_idx) >= pattern.shape[0]
+            or min(stimulus_pattern_idx) < 0
+        ):
+            raise ValueError(
+                f"--stimulus_pattern_idx must be in [0, num_patterns-1], num_patterns is {pattern.shape[0]}"
+            )
+
+        params = {
+            "rpe": rpe,
+            "rpi": rpi,
+            "weighted": [*weighted],
+            "beta": beta, 
+            "minusbeta": minusbeta,
+            "norm": norm,
+            "perturbation": perturbation,
+            "stimuluspatternidx": stimulus_pattern_idx,
+        }
+
+        kwargs = {
+            "esize": esize,
+            "simtime": simtime,
+            "sparsity": sparsity,
+            "pattern": pattern,
+            "continuousstim": continuous_stim,
+        }
+
+        f = run_exp_eif_attr_blocked_stimulus
+
+        
+
+        run_experiments(f, params, kwargs, base_path, multi_proc=True, num_procs=6)
